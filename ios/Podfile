@@ -21,7 +21,11 @@ end
 react_native_path = File.expand_path('react-native', node_modules_path)
 react_native_pods = File.join(react_native_path, 'scripts', 'react_native_pods.rb')
 expo_autolinking = File.join(node_modules_path, 'expo-modules-autolinking', 'scripts', 'autolinking.rb')
-community_cli_path = File.join(node_modules_path, '@react-native-community', 'cli')
+community_cli_candidates = [
+  File.expand_path(File.join(node_modules_path, '@react-native-community', 'cli')),
+  File.expand_path(File.join(react_native_path, 'node_modules', '@react-native-community', 'cli'))
+]
+community_cli_path = community_cli_candidates.find { |path| File.directory?(path) }
 xcodebuild_available = system('command -v xcodebuild >/dev/null 2>&1')
 recommended_xcode_version = Gem::Version.new('16.1')
 xcodebuild_version = nil
@@ -54,15 +58,19 @@ if File.exist?(react_native_pods)
   target 'JunoNative' do
     use_expo_modules! if defined?(use_expo_modules!)
 
-    unless File.directory?(community_cli_path)
-      Pod::UI.puts "React Native CLI not found at #{community_cli_path}; install dev dependency @react-native-community/cli before running pod install."
+    unless community_cli_path
+      Pod::UI.puts 'React Native CLI not found in workspace node_modules or the React Native bundle; install it with `npm --prefix Juno-Native install -D @react-native-community/cli` or `yarn add -D @react-native-community/cli` before running pod install.'
       raise Pod::Informative, 'Missing React Native CLI; install it to enable native module autolinking.'
     end
 
-    cli_entrypoint = File.join(community_cli_path, 'build', 'index.js')
+    cli_entrypoint = [
+      File.join(community_cli_path, 'build', 'index.js'),
+      File.join(community_cli_path, 'build', 'index.cjs'),
+      File.join(community_cli_path, 'build', 'index.mjs')
+    ].find { |candidate| File.exist?(candidate) }
 
-    unless File.exist?(cli_entrypoint)
-      Pod::UI.puts "React Native CLI entrypoint not found at #{cli_entrypoint}; reinstall dev dependency @react-native-community/cli before running pod install."
+    unless cli_entrypoint
+      Pod::UI.puts "React Native CLI entrypoint not found under #{community_cli_path}; reinstall dev dependency @react-native-community/cli (e.g., via `yarn add -D @react-native-community/cli` in Juno-Native) before running pod install."
       raise Pod::Informative, 'Missing React Native CLI entrypoint; autolinking cannot proceed.'
     end
 
