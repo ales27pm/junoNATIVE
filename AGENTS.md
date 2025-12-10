@@ -10,7 +10,8 @@ These instructions apply to the entire repository.
 ## Required checks
 Run these from the **repo root** (the directory containing this file):
 - Lint: `npm --prefix Juno-Native run lint`
-- Tests: `npm --prefix Juno-Native run test`
+- Formatting (apply): `npm --prefix Juno-Native run format`
+- Formatting (check): `npm --prefix Juno-Native run check:format`
 - Formatting: `npm --prefix Juno-Native run format` (or `npm --prefix Juno-Native run check:format` to verify without modifying files)
 - Package metadata validation: `npm run validate:packages`
 
