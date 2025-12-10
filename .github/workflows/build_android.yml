@@ -16,21 +16,22 @@ jobs:
           node-version: 20
 
       - name: Setup Java
-        uses: actions/setup-java@v3
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
       - name: Install JS dependencies
+        working-directory: Juno-Native
         run: npm ci
 
       - name: Build Android Debug
         run: |
-          cd android
+          cd rtn-juno-engine/android
           ./gradlew assembleDebug --no-daemon
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
           name: JunoNative-android-debug
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          path: rtn-juno-engine/android/app/build/outputs/apk/debug/app-debug.apk

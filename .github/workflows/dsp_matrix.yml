@@ -21,12 +21,13 @@ jobs:
       - name: Configure CMake with matrix params
         run: |
           cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=Release \
             -DTEST_SAMPLE_RATE=${{ matrix.sr }} \
             -DTEST_BUFFER_SIZE=${{ matrix.bs }} \
             -DTEST_POLYPHONY=${{ matrix.poly }}
 
       - name: Build tests
-        run: cmake --build build --config Release
+        run: cmake --build build
 
       - name: Run DSP tests
         run: ctest --test-dir build --output-on-failure

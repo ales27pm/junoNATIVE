@@ -16,5 +16,5 @@ target_include_directories(juno_engine
         ${CMAKE_CURRENT_SOURCE_DIR}/../dsp
         ${PROJECT_SOURCE_DIR}/cpp/parser
         ${PROJECT_SOURCE_DIR}/cpp/dsp
-        ${PROJECT_SOURCE_DIR}/rtn-juno-engine/ios
+        $<$<PLATFORM_ID:Darwin>:${PROJECT_SOURCE_DIR}/rtn-juno-engine/ios>
 )

@@ -1,6 +1,9 @@
 name: Jest + DSP Tests
 
-on: [push, pull_request]
+on:
+  push:
+    branches: [ main ]
+  pull_request:
 
 jobs:
   tests:
@@ -16,9 +19,11 @@ jobs:
           node-version: 20
 
       - name: Install JS dependencies
+        working-directory: Juno-Native
         run: npm ci
 
       - name: Run Jest tests
+        working-directory: Juno-Native
         run: npm test -- --coverage
 
       - name: Configure CMake

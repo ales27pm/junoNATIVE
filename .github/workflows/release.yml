@@ -26,7 +26,7 @@ jobs:
 
       - name: Install JS deps and Fastlane
         run: |
-          npm ci
+          npm ci --prefix Juno-Native
           gem install fastlane
 
       # Optional version bump script; ensure scripts/bumpVersion.js exists if you keep this.
@@ -64,14 +64,14 @@ jobs:
           node-version: 20
 
       - name: Setup Java
-        uses: actions/setup-java@v3
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
       - name: Install JS deps and Fastlane
         run: |
-          npm ci
+          npm ci --prefix Juno-Native
           gem install fastlane
 
       - name: Android Fastlane release

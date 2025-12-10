@@ -30,25 +30,15 @@ enable_testing()
 # ------------------------------------------------------------
 # DSP engine subdirectory (assumes your engine CMakeLists exists there)
 # ------------------------------------------------------------
-# If you don't have a nested CMakeLists in rtn-juno-engine/cpp/engine,
-# you can instead add the engine sources directly from here.
-#
-# Example (if you prefer explicit sources):
-#   add_library(juno_engine STATIC
-#       rtn-juno-engine/cpp/engine/JunoDSPEngine.cpp
-#       rtn-juno-engine/cpp/engine/JunoVoice.cpp
-#       rtn-juno-engine/cpp/engine/RCUParameterManager.cpp
-#   )
-#
-# For now we keep the structure from the spec:
 add_subdirectory(rtn-juno-engine/cpp/engine)
 
 # ------------------------------------------------------------
 # Unit tests & benchmarks
 # ------------------------------------------------------------
-file(GLOB TEST_SRC
-  tests/dsp/*.cpp
-  tests/integration/*.cpp
+set(TEST_SRC
+  tests/dsp/cpu_bench.cpp
+  tests/dsp/latency_test.cpp
+  tests/integration/render_consistency.cpp
 )
 
 add_executable(juno_tests ${TEST_SRC})
