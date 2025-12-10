@@ -4,7 +4,13 @@ import React from "react";
 import { View, Pressable, StyleSheet } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { ThemedText } from "@/components/ThemedText";
-import { Colors, Spacing, Typography, BorderRadius, Shadows } from "@/constants/theme";
+import {
+  Colors,
+  Spacing,
+  Typography,
+  BorderRadius,
+  Shadows,
+} from "@/constants/theme";
 import { Patch } from "@/hooks/useSynthEngine";
 
 interface PatchCardProps {
@@ -14,12 +20,13 @@ interface PatchCardProps {
   onLongPress?: () => void;
 }
 
-const categoryIcons: Record<Patch["category"], keyof typeof Feather.glyphMap> = {
-  bass: "activity",
-  lead: "zap",
-  pad: "cloud",
-  fx: "wind",
-};
+const categoryIcons: Record<Patch["category"], keyof typeof Feather.glyphMap> =
+  {
+    bass: "activity",
+    lead: "zap",
+    pad: "cloud",
+    fx: "wind",
+  };
 
 const categoryColors: Record<Patch["category"], string> = {
   bass: "#FF6B35",
@@ -52,19 +59,27 @@ export default function PatchCard({
         Shadows.card,
       ]}
     >
-      <View style={[styles.categoryBadge, { backgroundColor: categoryColor + "30" }]}>
+      <View
+        style={[
+          styles.categoryBadge,
+          { backgroundColor: categoryColor + "30" },
+        ]}
+      >
         <Feather name={iconName} size={20} color={categoryColor} />
       </View>
-      <ThemedText style={[styles.name, { color: theme.text }]} numberOfLines={1}>
+      <ThemedText
+        style={[styles.name, { color: theme.text }]}
+        numberOfLines={1}
+      >
         {patch.name}
       </ThemedText>
-      <ThemedText
-        style={[styles.category, { color: theme.textSecondary }]}
-      >
+      <ThemedText style={[styles.category, { color: theme.textSecondary }]}>
         {patch.category.toUpperCase()}
       </ThemedText>
       {isActive && (
-        <View style={[styles.activeIndicator, { backgroundColor: theme.accent }]} />
+        <View
+          style={[styles.activeIndicator, { backgroundColor: theme.accent }]}
+        />
       )}
     </Pressable>
   );
@@ -105,6 +120,5 @@ const styles = StyleSheet.create({
     height: 3,
   },
 });
-
 
 // ============================================================

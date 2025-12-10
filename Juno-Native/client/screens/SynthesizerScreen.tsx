@@ -46,7 +46,9 @@ export default function SynthesizerScreen() {
             {currentPatch.name}
           </ThemedText>
         ) : (
-          <ThemedText style={[styles.patchName, { color: theme.textSecondary }]}>
+          <ThemedText
+            style={[styles.patchName, { color: theme.textSecondary }]}
+          >
             No Patch Loaded
           </ThemedText>
         )}
@@ -55,7 +57,9 @@ export default function SynthesizerScreen() {
       <View style={styles.waveformContainer}>
         <WaveformDisplay
           isActive={isActive}
-          waveType={switches.sawWaveOn ? "saw" : switches.pulseWaveOn ? "pulse" : "sine"}
+          waveType={
+            switches.sawWaveOn ? "saw" : switches.pulseWaveOn ? "pulse" : "sine"
+          }
         />
       </View>
 
@@ -108,6 +112,5 @@ const styles = StyleSheet.create({
     minHeight: 140,
   },
 });
-
 
 // ============================================================

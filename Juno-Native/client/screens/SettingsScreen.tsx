@@ -1,7 +1,14 @@
 // ============================================================
 
 import React from "react";
-import { View, StyleSheet, ScrollView, Pressable, Linking, Platform } from "react-native";
+import {
+  View,
+  StyleSheet,
+  ScrollView,
+  Pressable,
+  Linking,
+  Platform,
+} from "react-native";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 import { Feather } from "@expo/vector-icons";
 import { ThemedText } from "@/components/ThemedText";
@@ -26,14 +33,21 @@ function SettingItem({ icon, label, value, onPress }: SettingItemProps) {
         pressed && onPress && styles.settingItemPressed,
       ]}
     >
-      <View style={[styles.settingIcon, { backgroundColor: theme.backgroundSecondary }]}>
+      <View
+        style={[
+          styles.settingIcon,
+          { backgroundColor: theme.backgroundSecondary },
+        ]}
+      >
         <Feather name={icon} size={20} color={theme.accent} />
       </View>
       <ThemedText style={[styles.settingLabel, { color: theme.text }]}>
         {label}
       </ThemedText>
       {value ? (
-        <ThemedText style={[styles.settingValue, { color: theme.textSecondary }]}>
+        <ThemedText
+          style={[styles.settingValue, { color: theme.textSecondary }]}
+        >
           {value}
         </ThemedText>
       ) : null}
@@ -111,7 +125,9 @@ export default function SettingsScreen() {
         <ThemedText style={[styles.footerText, { color: theme.textSecondary }]}>
           JUNO-106 Synthesizer
         </ThemedText>
-        <ThemedText style={[styles.footerSubtext, { color: theme.textSecondary }]}>
+        <ThemedText
+          style={[styles.footerSubtext, { color: theme.textSecondary }]}
+        >
           Inspired by the classic Roland JUNO-106
         </ThemedText>
       </View>
@@ -176,6 +192,5 @@ const styles = StyleSheet.create({
     ...Typography.small,
   },
 });
-
 
 // ============================================================

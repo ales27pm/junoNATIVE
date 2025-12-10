@@ -1,7 +1,12 @@
 // ============================================================
 
 import React, { createContext, useContext, ReactNode } from "react";
-import { useSynthEngine, SynthParams, SynthSwitches, Patch } from "@/hooks/useSynthEngine";
+import {
+  useSynthEngine,
+  SynthParams,
+  SynthSwitches,
+  Patch,
+} from "@/hooks/useSynthEngine";
 
 interface SynthContextType {
   params: SynthParams;
@@ -11,7 +16,10 @@ interface SynthContextType {
   activeNotes: Set<number>;
   isLoading: boolean;
   setParam: (key: keyof SynthParams, value: number) => void;
-  setSwitch: <K extends keyof SynthSwitches>(key: K, value: SynthSwitches[K]) => void;
+  setSwitch: <K extends keyof SynthSwitches>(
+    key: K,
+    value: SynthSwitches[K],
+  ) => void;
   noteOn: (note: number, velocity?: number) => void;
   noteOff: (note: number) => void;
   loadPatch: (patch: Patch) => Promise<void>;
@@ -26,7 +34,9 @@ export function SynthProvider({ children }: { children: ReactNode }) {
   const synthEngine = useSynthEngine();
 
   return (
-    <SynthContext.Provider value={synthEngine}>{children}</SynthContext.Provider>
+    <SynthContext.Provider value={synthEngine}>
+      {children}
+    </SynthContext.Provider>
   );
 }
 
@@ -37,6 +47,5 @@ export function useSynth() {
   }
   return context;
 }
-
 
 // ============================================================

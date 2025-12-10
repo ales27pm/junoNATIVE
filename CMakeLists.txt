@@ -18,7 +18,8 @@ include(FetchContent)
 FetchContent_Declare(
   googletest
   URL https://github.com/google/googletest/archive/refs/tags/v1.15.2.zip
-  URL_HASH SHA256=bf341d8f3a8cc3b2d9f2bfb0b7b0a4a319e1b0a2bcb0f7b4a4a3b7d2a4e5c6f1
+  URL_HASH SHA256=f179ec217f9b3b3f3c6e8b02d3e7eda997b49e4ce26d6b235c9053bec9c0bf9f
+  DOWNLOAD_EXTRACT_TIMESTAMP TRUE
 )
 
 # For Windows shared CRT handling, keep default.

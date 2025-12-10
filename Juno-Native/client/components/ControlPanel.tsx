@@ -13,7 +13,10 @@ interface ControlPanelProps {
   params: SynthParams;
   switches: SynthSwitches;
   onParamChange: (key: keyof SynthParams, value: number) => void;
-  onSwitchChange: <K extends keyof SynthSwitches>(key: K, value: SynthSwitches[K]) => void;
+  onSwitchChange: <K extends keyof SynthSwitches>(
+    key: K,
+    value: SynthSwitches[K],
+  ) => void;
 }
 
 export default function ControlPanel({
@@ -267,6 +270,5 @@ const styles = StyleSheet.create({
     marginVertical: Spacing.lg,
   },
 });
-
 
 // ============================================================

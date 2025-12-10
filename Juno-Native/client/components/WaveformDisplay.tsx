@@ -1,6 +1,6 @@
 // ============================================================
 
-import React, { useEffect, useRef } from "react";
+import React, { useEffect } from "react";
 import { View, StyleSheet } from "react-native";
 import Animated, {
   useSharedValue,
@@ -30,13 +30,13 @@ export default function WaveformDisplay({
       animationPhase.value = withRepeat(
         withTiming(1, { duration: 2000, easing: Easing.linear }),
         -1,
-        false
+        false,
       );
       opacity.value = withSpring(1);
     } else {
       opacity.value = withSpring(0.3);
     }
-  }, [isActive]);
+  }, [animationPhase, isActive, opacity]);
 
   const animatedContainerStyle = useAnimatedStyle(() => ({
     opacity: opacity.value,
@@ -122,6 +122,5 @@ const styles = StyleSheet.create({
     borderRadius: 1,
   },
 });
-
 
 // ============================================================

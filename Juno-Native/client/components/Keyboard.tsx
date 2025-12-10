@@ -14,7 +14,6 @@ interface KeyboardProps {
 }
 
 const WHITE_KEY_NOTES = [0, 2, 4, 5, 7, 9, 11];
-const BLACK_KEY_POSITIONS = [0, 1, 3, 4, 5];
 const BLACK_KEY_OFFSETS = [0.7, 1.7, 3.7, 4.7, 5.7];
 
 export default function Keyboard({
@@ -37,14 +36,14 @@ export default function Keyboard({
       triggerHaptic();
       onNoteOn(note, 100);
     },
-    [onNoteOn, triggerHaptic]
+    [onNoteOn, triggerHaptic],
   );
 
   const handleKeyRelease = useCallback(
     (note: number) => {
       onNoteOff(note);
     },
-    [onNoteOff]
+    [onNoteOff],
   );
 
   const renderOctave = (octave: number, octaveIndex: number) => {
@@ -66,7 +65,8 @@ export default function Keyboard({
               style={({ pressed }) => [
                 styles.whiteKey,
                 {
-                  backgroundColor: isActive || pressed ? theme.keyPressed : theme.keyWhite,
+                  backgroundColor:
+                    isActive || pressed ? theme.keyPressed : theme.keyWhite,
                   width: `${whiteKeyWidth}%`,
                 },
                 Shadows.whiteKey,
@@ -87,7 +87,8 @@ export default function Keyboard({
               style={({ pressed }) => [
                 styles.blackKey,
                 {
-                  backgroundColor: isActive || pressed ? theme.keyPressed : theme.keyBlack,
+                  backgroundColor:
+                    isActive || pressed ? theme.keyPressed : theme.keyBlack,
                   width: `${blackKeyWidth}%`,
                   left: `${leftPosition}%`,
                 },
@@ -143,6 +144,5 @@ const styles = StyleSheet.create({
     zIndex: 1,
   },
 });
-
 
 // ============================================================

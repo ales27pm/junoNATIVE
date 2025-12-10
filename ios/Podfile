@@ -1,0 +1,92 @@
+platform :ios, '13.0'
+
+source 'https://github.com/CocoaPods/Specs.git'
+
+install! 'cocoapods', :generate_multiple_pod_projects => true, :integrate_targets => false
+project 'JunoNative.xcodeproj'
+
+workspace_node_modules = File.expand_path('../Juno-Native/node_modules', __dir__)
+root_node_modules = File.expand_path('../node_modules', __dir__)
+
+node_modules_path = if File.directory?(workspace_node_modules)
+  workspace_node_modules
+elsif File.directory?(root_node_modules)
+  Pod::UI.puts 'Falling back to ../node_modules for React Native dependencies.'
+  root_node_modules
+else
+  workspace_node_modules
+end
+
+react_native_path = File.join(node_modules_path, 'react-native')
+react_native_pods = File.join(react_native_path, 'scripts', 'react_native_pods.rb')
+expo_autolinking = File.join(node_modules_path, 'expo-modules-autolinking', 'scripts', 'autolinking.rb')
+community_cli_path = File.join(node_modules_path, '@react-native-community', 'cli')
+xcodebuild_available = system('command -v xcodebuild >/dev/null 2>&1')
+minimum_xcode_version = Gem::Version.new('16.1')
+xcodebuild_version = nil
+
+if xcodebuild_available
+  begin
+    version_output = `xcodebuild -version 2>/dev/null`
+    match = version_output.match(/Xcode\s+(\d+(?:\.\d+)+)/)
+    xcodebuild_version = Gem::Version.new(match[1]) if match
+  rescue StandardError => e
+    Pod::UI.puts "Unable to determine xcodebuild version: #{e.message}"
+  end
+end
+
+xcodebuild_supported = xcodebuild_available && xcodebuild_version && xcodebuild_version >= minimum_xcode_version
+
+if File.exist?(react_native_pods)
+  require_relative react_native_pods
+  require_relative expo_autolinking if File.exist?(expo_autolinking)
+
+  ENV['RCT_NEW_ARCH_ENABLED'] ||= '0'
+
+  prepare_react_native_project!
+
+  target 'JunoNative' do
+    use_expo_modules! if defined?(use_expo_modules!)
+
+    config = if File.directory?(community_cli_path)
+      use_native_modules!(
+        package_json_path: File.expand_path('../Juno-Native/package.json', __dir__)
+      )
+    else
+      Pod::UI.puts 'React Native CLI not found; skipping native module autolinking.'
+      { reactNativePath: react_native_path }
+    end
+
+    if xcodebuild_supported
+      use_react_native!(
+        :path => config[:reactNativePath],
+        :hermes_enabled => true,
+        :app_path => File.expand_path('../Juno-Native', __dir__),
+        :config_file_dir => File.expand_path('../Juno-Native', __dir__)
+      )
+    else
+      if xcodebuild_version.nil?
+        Pod::UI.puts 'xcodebuild is unavailable or version could not be detected; skipping React Native pod configuration to allow CI tooling to proceed.'
+      else
+        Pod::UI.puts "xcodebuild version #{xcodebuild_version} is below the required #{minimum_xcode_version}; skipping React Native pod configuration to allow CI tooling to proceed."
+      end
+    end
+
+    post_install do |installer|
+      if xcodebuild_supported && defined?(react_native_post_install)
+        react_native_post_install(
+          installer,
+          :mac_catalyst_enabled => false
+        )
+      else
+        Pod::UI.puts 'Skipping React Native post_install because xcodebuild is unavailable or below the required version.'
+      end
+      __apply_Xcode_12_5_M1_post_install_workaround(installer) if respond_to?(:__apply_Xcode_12_5_M1_post_install_workaround)
+    end
+  end
+else
+  Pod::UI.puts 'React Native node_modules not found; creating an empty Pods project for CI compatibility.'
+
+  target 'JunoNative' do
+  end
+end

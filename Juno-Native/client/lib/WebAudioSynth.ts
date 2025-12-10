@@ -33,8 +33,9 @@ class WebAudioSynth {
 
   private async initializeAudio() {
     try {
-      this.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-      
+      this.audioContext = new (window.AudioContext ||
+        (window as any).webkitAudioContext)();
+
       this.masterGain = this.audioContext.createGain();
       this.masterGain.gain.value = 0.5;
       this.masterGain.connect(this.audioContext.destination);
@@ -127,7 +128,12 @@ class WebAudioSynth {
   }
 
   public async noteOn(note: number, velocity: number = 100) {
-    if (!this.audioContext || !this.masterGain || !this.params || !this.switches) {
+    if (
+      !this.audioContext ||
+      !this.masterGain ||
+      !this.params ||
+      !this.switches
+    ) {
       await this.initializeAudio();
       if (!this.audioContext || !this.masterGain) return;
     }
@@ -155,19 +161,23 @@ class WebAudioSynth {
 
     const filterNode = this.audioContext.createBiquadFilter();
     filterNode.type = "lowpass";
-    
-    const cutoffHz = this.params ? 20 + (this.params.vcfCutoff / 127) * 19980 : 5000;
+
+    const cutoffHz = this.params
+      ? 20 + (this.params.vcfCutoff / 127) * 19980
+      : 5000;
     filterNode.frequency.value = cutoffHz;
-    filterNode.Q.value = this.params ? (this.params.vcfResonance / 127) * 20 : 1;
+    filterNode.Q.value = this.params
+      ? (this.params.vcfResonance / 127) * 20
+      : 1;
 
     if (this.switches?.sawWaveOn) {
       const sawOsc = this.audioContext.createOscillator();
       sawOsc.type = "sawtooth";
       sawOsc.frequency.value = frequency;
-      
+
       if (this.switches.dcoFoot16) sawOsc.frequency.value = frequency * 0.5;
       else if (this.switches.dcoFoot4) sawOsc.frequency.value = frequency * 2;
-      
+
       sawOsc.connect(filterNode);
       sawOsc.start();
       oscillators.push(sawOsc);
@@ -181,10 +191,10 @@ class WebAudioSynth {
       const pulseOsc = this.audioContext.createOscillator();
       pulseOsc.type = "square";
       pulseOsc.frequency.value = frequency;
-      
+
       if (this.switches.dcoFoot16) pulseOsc.frequency.value = frequency * 0.5;
       else if (this.switches.dcoFoot4) pulseOsc.frequency.value = frequency * 2;
-      
+
       pulseOsc.connect(filterNode);
       pulseOsc.start();
       oscillators.push(pulseOsc);
@@ -194,10 +204,10 @@ class WebAudioSynth {
       const subOsc = this.audioContext.createOscillator();
       subOsc.type = "square";
       subOsc.frequency.value = frequency * 0.5;
-      
+
       const subGain = this.audioContext.createGain();
       subGain.gain.value = (this.params.dcoSubLevel / 127) * 0.5;
-      
+
       subOsc.connect(subGain);
       subGain.connect(filterNode);
       subOsc.start();
@@ -215,7 +225,12 @@ class WebAudioSynth {
 
     filterNode.connect(gainNode);
 
-    if (this.switches?.chorusMode && this.switches.chorusMode > 0 && this.chorusDelayL && this.chorusDelayR) {
+    if (
+      this.switches?.chorusMode &&
+      this.switches.chorusMode > 0 &&
+      this.chorusDelayL &&
+      this.chorusDelayR
+    ) {
       const dryGain = this.audioContext.createGain();
       dryGain.gain.value = 0.5;
       gainNode.connect(dryGain);
@@ -237,14 +252,22 @@ class WebAudioSynth {
     }
 
     const now = this.audioContext.currentTime;
-    const velocityGain = (velocity / 127) * (this.params ? this.params.vcaLevel / 127 : 0.8);
-    const attackTime = this.params ? (this.params.envAttack / 127) * 2 + 0.001 : 0.01;
-    const decayTime = this.params ? (this.params.envDecay / 127) * 2 + 0.01 : 0.2;
-    const sustainLevel = this.params ? (this.params.envSustain / 127) : 0.7;
+    const velocityGain =
+      (velocity / 127) * (this.params ? this.params.vcaLevel / 127 : 0.8);
+    const attackTime = this.params
+      ? (this.params.envAttack / 127) * 2 + 0.001
+      : 0.01;
+    const decayTime = this.params
+      ? (this.params.envDecay / 127) * 2 + 0.01
+      : 0.2;
+    const sustainLevel = this.params ? this.params.envSustain / 127 : 0.7;
 
     gainNode.gain.setValueAtTime(0, now);
     gainNode.gain.linearRampToValueAtTime(velocityGain, now + attackTime);
-    gainNode.gain.linearRampToValueAtTime(velocityGain * sustainLevel, now + attackTime + decayTime);
+    gainNode.gain.linearRampToValueAtTime(
+      velocityGain * sustainLevel,
+      now + attackTime + decayTime,
+    );
 
     const voice: Voice = {
       oscillators,
@@ -262,23 +285,30 @@ class WebAudioSynth {
     if (!voice || !this.audioContext) return;
 
     const now = this.audioContext.currentTime;
-    const releaseTime = this.params ? (this.params.envRelease / 127) * 3 + 0.01 : 0.3;
+    const releaseTime = this.params
+      ? (this.params.envRelease / 127) * 3 + 0.01
+      : 0.3;
 
     voice.gainNode.gain.cancelScheduledValues(now);
     voice.gainNode.gain.setValueAtTime(voice.gainNode.gain.value, now);
     voice.gainNode.gain.linearRampToValueAtTime(0, now + releaseTime);
 
-    setTimeout(() => {
-      voice.oscillators.forEach((osc) => {
-        try {
-          osc.stop();
-          osc.disconnect();
-        } catch (e) {}
-      });
-      voice.gainNode.disconnect();
-      voice.filterNode.disconnect();
-      this.voices.delete(note);
-    }, releaseTime * 1000 + 50);
+    setTimeout(
+      () => {
+        voice.oscillators.forEach((osc) => {
+          try {
+            osc.stop();
+            osc.disconnect();
+          } catch (error) {
+            console.warn("Failed to stop oscillator", error);
+          }
+        });
+        voice.gainNode.disconnect();
+        voice.filterNode.disconnect();
+        this.voices.delete(note);
+      },
+      releaseTime * 1000 + 50,
+    );
   }
 
   public allNotesOff() {
@@ -289,7 +319,7 @@ class WebAudioSynth {
 
   public dispose() {
     this.allNotesOff();
-    
+
     if (this.lfoNode) {
       this.lfoNode.stop();
       this.lfoNode.disconnect();
@@ -309,6 +339,5 @@ class WebAudioSynth {
 }
 
 export const webAudioSynth = new WebAudioSynth();
-
 
 // ============================================================

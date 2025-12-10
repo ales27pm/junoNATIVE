@@ -21,7 +21,7 @@ export type MainTabParamList = {
 const Tab = createBottomTabNavigator<MainTabParamList>();
 
 export default function MainTabNavigator() {
-  const { theme, isDark } = useTheme();
+  const { theme } = useTheme();
   const screenOptions = useScreenOptions();
 
   return (
@@ -86,6 +86,5 @@ export default function MainTabNavigator() {
     </Tab.Navigator>
   );
 }
-
 
 // ============================================================
