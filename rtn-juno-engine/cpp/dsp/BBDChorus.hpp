@@ -59,7 +59,7 @@ public:
         const float lfoRateL = 0.6f;  // Hz
         const float lfoRateR = 1.2f;  // Hz
 
-        // Sine LFOs in [−1, 1]
+        // Sine LFOs in [-1, 1]
         float lfoL = std::sin(2.0f * kPi * lfoPhaseL_);
         float lfoR = std::sin(2.0f * kPi * lfoPhaseR_);
 
