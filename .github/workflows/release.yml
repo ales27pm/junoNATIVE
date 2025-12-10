@@ -41,9 +41,7 @@ jobs:
       - name: iOS Fastlane release
         run: fastlane ios release
         env:
-          APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APPLE_KEY_ID }}
-          APP_STORE_CONNECT_API_KEY_ISSUER_ID: ${{ secrets.APPLE_ISSUER_ID }}
-          APP_STORE_CONNECT_API_KEY: ${{ secrets.APPLE_KEY }}
+          APP_STORE_CONNECT_API_KEY_JSON: ${{ secrets.APPLE_API_KEY_JSON }}
   
   android_release:
     needs: ios_release
