@@ -38,14 +38,18 @@ bool JunoDSPEngine::initialize(int sr, int bs, int poly, bool gpuFlag) {
         gpu_.reset();
     }
 
-    running_ = true;
+    running_.store(true, std::memory_order_release);
     return true;
 }
 
-void JunoDSPEngine::start()  { running_ = true; }
-void JunoDSPEngine::stop()   { running_ = false; }
+void JunoDSPEngine::start()  { running_.store(true, std::memory_order_release); }
+void JunoDSPEngine::stop()   { running_.store(false, std::memory_order_release); }
 
 void JunoDSPEngine::noteOn(int note, float vel) {
+    if (voices_.empty()) {
+        return;
+    }
+
     // Basic voice allocation: first free voice, else steal voice 0
     auto it = std::find_if(
         voices_.begin(),
@@ -59,9 +63,8 @@ void JunoDSPEngine::noteOn(int note, float vel) {
 }
 
 void JunoDSPEngine::noteOff(int note) {
-    (void)note;
     for (auto &v : voices_) {
-        v->noteOff();
+        v->noteOff(note);
     }
 }
 
@@ -94,7 +97,7 @@ void JunoDSPEngine::loadPatch(const Juno106::JunoPatch &p) {
 }
 
 void JunoDSPEngine::renderAudio(float *L, float *R, int n) {
-    if (!running_ || !L || !R || n <= 0) return;
+    if (!running_.load(std::memory_order_acquire) || !L || !R || n <= 0) return;
 
     if (useGPU_ && gpu_) {
         // Collect voice state for GPU

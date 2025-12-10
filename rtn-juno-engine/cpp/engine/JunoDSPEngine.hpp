@@ -4,6 +4,7 @@
 #include <vector>
 #include <memory>
 #include <string>
+#include <atomic>
 
 class JunoRenderEngine; // Forward declaration
 
@@ -30,7 +31,7 @@ private:
     RCUParameterManager params_;
     int  sampleRate_ = 44100;
     int  bufferSize_ = 256;
-    bool running_    = false;
+    std::atomic<bool> running_{false};
     bool useGPU_     = false;
 
     std::unique_ptr<JunoRenderEngine> gpu_;

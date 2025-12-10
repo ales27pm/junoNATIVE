@@ -8,7 +8,7 @@ class JunoVoice {
 public:
     void initialize(float sampleRate);
     void noteOn(int midiNote, float velocity);
-    void noteOff();
+    void noteOff(int midiNote);
     void setParam(const std::string &id, float value);
     void process(float &left, float &right);
     bool isActive() const;
@@ -28,6 +28,7 @@ private:
     float envLevel_   = 0.0f;
     float envTarget_  = 0.0f;
     bool  active_     = false;
+    int   midiNote_   = -1;
 
     float attack_     = 0.01f;
     float release_    = 0.5f;

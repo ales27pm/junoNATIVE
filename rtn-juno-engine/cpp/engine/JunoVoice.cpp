@@ -11,13 +11,18 @@ void JunoVoice::initialize(float sr) {
 void JunoVoice::noteOn(int midiNote, float vel) {
     active_   = true;
     velocity_ = vel;
+    midiNote_ = midiNote;
     frequency_ = 440.0f * std::pow(2.0f, (static_cast<float>(midiNote) - 69.0f) / 12.0f);
     envLevel_  = 0.0f;
     envTarget_ = 1.0f;
     phase_     = 0.0f;
 }
 
-void JunoVoice::noteOff() {
+void JunoVoice::noteOff(int midiNote) {
+    if (!active_ || midiNote_ != midiNote) {
+        return;
+    }
+
     // Let envelope decay
     envTarget_ = 0.0f;
 }
@@ -52,6 +57,7 @@ void JunoVoice::process(float &L, float &R) {
 
     if (envLevel_ < 1e-4f && envTarget_ == 0.0f) {
         active_ = false;
+        midiNote_ = -1;
         return;
     }
 
