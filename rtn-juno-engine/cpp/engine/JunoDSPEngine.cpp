@@ -16,6 +16,9 @@ namespace Juno106 {
 }
 
 bool JunoDSPEngine::initialize(int sr, int bs, int poly, bool gpuFlag) {
+    if (poly <= 0) {
+        return false;
+    }
     sampleRate_ = sr;
     bufferSize_ = bs;
     useGPU_     = gpuFlag;
