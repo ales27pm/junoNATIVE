@@ -29,6 +29,9 @@ jobs:
           npm ci --prefix Juno-Native
           gem install fastlane
 
+      - name: Compile TurboModules
+        run: bash scripts/compile-turbo-modules.sh
+
       # Optional version bump script; ensure scripts/bumpVersion.js exists if you keep this.
       - name: Bump version (optional)
         run: |
@@ -57,6 +60,13 @@ jobs:
         run: |
           fastlane ios release
           rm -f ./asc_key.json
+
+      - name: Upload TurboModule artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: turbomodules-generated-ios
+          path: fastlane/build/codegen/**
+          if-no-files-found: error
 
       - name: Upload iOS IPA artifact
         uses: actions/upload-artifact@v4
@@ -94,6 +104,9 @@ jobs:
           npm ci --prefix Juno-Native
           gem install fastlane
 
+      - name: Compile TurboModules
+        run: bash scripts/compile-turbo-modules.sh
+
       - name: Android Fastlane release
         env:
           SUPPLY_JSON_KEY_DATA: ${{ secrets.GOOGLE_PLAY_JSON }}
@@ -105,4 +118,11 @@ jobs:
         with:
           name: android-play-bundle
           path: fastlane/build/android/*.aab
+          if-no-files-found: error
+
+      - name: Upload TurboModule artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: turbomodules-generated-android
+          path: fastlane/build/codegen/**
           if-no-files-found: error

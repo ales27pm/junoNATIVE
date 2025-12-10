@@ -8,6 +8,8 @@ platform :ios do
     output_dir = File.expand_path("fastlane/build/ios")
     FileUtils.mkdir_p(output_dir)
 
+    sh("bash scripts/compile-turbo-modules.sh")
+
     build_app(
       workspace: "ios/JunoNative.xcworkspace",
       scheme: "JunoNative",
@@ -31,6 +33,8 @@ platform :android do
   lane :release do
     output_dir = File.expand_path("fastlane/build/android")
     FileUtils.mkdir_p(output_dir)
+
+    sh("bash scripts/compile-turbo-modules.sh")
 
     gradle(
       task: "bundle",
