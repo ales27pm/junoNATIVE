@@ -1,19 +1,8 @@
 #include "JunoDSPEngine.hpp"
 #include "../ios/JunoRenderEngine.hpp"
+#include "../parser/Juno106PatchParser.hpp"
 #include <algorithm>
 #include <cmath>
-
-namespace Juno106 {
-    struct JunoPatch {
-        // Minimal subset needed by this engine. If you already have a richer
-        // JunoPatch in your project, remove this and include the real header.
-        unsigned char vcfCutoff   = 100;
-        unsigned char vcfResonance= 20;
-        unsigned char envAttack   = 20;
-        unsigned char envRelease  = 40;
-        unsigned char dcoSubLevel = 0;
-    };
-}
 
 bool JunoDSPEngine::initialize(int sr, int bs, int poly, bool gpuFlag) {
     if (poly <= 0) {

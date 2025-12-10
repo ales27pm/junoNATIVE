@@ -159,6 +159,14 @@ void JunoRenderEngine::render(float *L, float *R, int n) {
 }
 
 void JunoRenderEngine::shutdown() {
+    if (queue_) {
+        [queue_ waitUntilIdle];
+    }
+
+    readyIndex_.store(-1, std::memory_order_release);
+    submitIndex_ = 0;
+    voiceCache_.clear();
+
     init_ = false;
     device_ = nil;
     queue_ = nil;

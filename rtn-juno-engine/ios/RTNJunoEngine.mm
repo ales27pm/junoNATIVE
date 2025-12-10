@@ -3,6 +3,7 @@
 #import <React/RCTEventEmitter.h>
 #import <React/RCTBridgeModule.h>
 #import <cstring>
+#include <exception>
 
 #import "RTNJunoEngine.h"
 #import "JunoDSPEngine.hpp"
@@ -131,26 +132,32 @@ RCT_EXPORT_METHOD(initialize:(NSDictionary *)config)
 RCT_EXPORT_METHOD(setParameter:(NSString *)param value:(double)val)
 {
   if (!_isInitialized || !_dspEngine) return;
-  @try {
+  try {
     _dspEngine->setParameter([param UTF8String], (float)val);
     [self sendEventWithName:EVENT_PARAMETER_CHANGED
                        body:@{ @"id": param, @"value": @(val) }];
-  } @catch (NSException *ex) {
-    [self sendEventWithName:EVENT_ERROR body:@{ @"message": ex.reason ?: @"setParameter exception" }];
+  } catch (const std::exception &e) {
+    NSString *msg = [NSString stringWithUTF8String:e.what()];
+    [self sendEventWithName:EVENT_ERROR body:@{ @"message": msg ?: @"setParameter exception" }];
+  } catch (...) {
+    [self sendEventWithName:EVENT_ERROR body:@{ @"message": @"setParameter exception" }];
   }
 }
 
 RCT_EXPORT_METHOD(setParametersBatch:(NSDictionary *)params)
 {
   if (!_isInitialized || !_dspEngine) return;
-  @try {
+  try {
     for (NSString *k in params) {
       double v = [params[k] doubleValue];
       _dspEngine->setParameter([k UTF8String], (float)v);
     }
     [self sendEventWithName:EVENT_PARAMETER_CHANGED body:@{ @"batch": @YES }];
-  } @catch (NSException *ex) {
-    [self sendEventWithName:EVENT_ERROR body:@{ @"message": ex.reason ?: @"setParametersBatch exception" }];
+  } catch (const std::exception &e) {
+    NSString *msg = [NSString stringWithUTF8String:e.what()];
+    [self sendEventWithName:EVENT_ERROR body:@{ @"message": msg ?: @"setParametersBatch exception" }];
+  } catch (...) {
+    [self sendEventWithName:EVENT_ERROR body:@{ @"message": @"setParametersBatch exception" }];
   }
 }
 

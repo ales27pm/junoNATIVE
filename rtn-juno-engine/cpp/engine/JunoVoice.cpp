@@ -1,5 +1,6 @@
 #include "JunoVoice.hpp"
 #include <algorithm>
+#include <cmath>
 
 void JunoVoice::initialize(float sr) {
     sampleRate_ = sr;
@@ -89,8 +90,13 @@ bool JunoVoice::stepEnvelopeAndPhase() {
 
     // Envelope follower (simple one-pole towards envTarget)
     float envRate = (envTarget_ > envLevel_) ? attack_ : release_;
-    float step    = envRate / std::max(sampleRate_, 1.0f);
-    envLevel_ += (envTarget_ - envLevel_) * step;
+    if (envRate <= 0.0f || sampleRate_ <= 0.0f) {
+        envLevel_ = envTarget_;
+    } else {
+        float step = 1.0f - std::exp(-1.0f / (envRate * sampleRate_));
+        step = std::clamp(step, 0.0f, 1.0f);
+        envLevel_ += (envTarget_ - envLevel_) * step;
+    }
 
     if (envLevel_ < 1e-4f && envTarget_ == 0.0f) {
         active_ = false;
