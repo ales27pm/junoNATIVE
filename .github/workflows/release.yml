@@ -39,15 +39,23 @@ jobs:
           fi
 
       - name: Prepare App Store Connect API key
-        run: |
-          echo "${APPLE_API_KEY_JSON}" > ./asc_key.json
-          chmod 600 ./asc_key.json
+        shell: bash
         env:
           APPLE_API_KEY_JSON: ${{ secrets.APPLE_API_KEY_JSON }}
+        run: |
+          set -euo pipefail
+          umask 177
+          cat > ./asc_key.json << 'EOF'
+          ${APPLE_API_KEY_JSON}
+          EOF
+          test -s ./asc_key.json
+
       - name: iOS Fastlane release
         env:
           APP_STORE_CONNECT_API_KEY_PATH: ./asc_key.json
-        run: fastlane ios release
+        run: |
+          fastlane ios release
+          rm -f ./asc_key.json
   
   android_release:
     needs: ios_release
