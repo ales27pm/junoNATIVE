@@ -23,6 +23,8 @@ jobs:
 
       - name: Install JS dependencies
         working-directory: Juno-Native
+        run: npm ci
+
       - name: Setup Java
         id: setupjava
         uses: actions/setup-java@v4
