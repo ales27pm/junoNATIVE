@@ -4,16 +4,11 @@
 #include <vector>
 #include <memory>
 #include <string>
-#include <atomic>
+
+class JunoRenderEngine; // Forward declaration
 
 namespace Juno106 {
-    struct JunoPatch {
-        unsigned char vcfCutoff   = 100;
-        unsigned char vcfResonance= 20;
-        unsigned char envAttack   = 20;
-        unsigned char envRelease  = 40;
-        unsigned char dcoSubLevel = 0;
-    };
+    struct JunoPatch; // Real definition lives in parser header
 }
 
 class JunoDSPEngine {
@@ -33,8 +28,10 @@ public:
 private:
     std::vector<std::unique_ptr<JunoVoice>> voices_;
     RCUParameterManager params_;
-    int               sampleRate_ = 44100;
-    int               bufferSize_ = 256;
-    std::atomic<bool> running_{false};
-    bool              useGPU_     = false;
+    int  sampleRate_ = 44100;
+    int  bufferSize_ = 256;
+    bool running_    = false;
+    bool useGPU_     = false;
+
+    std::unique_ptr<JunoRenderEngine> gpu_;
 };
