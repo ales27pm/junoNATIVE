@@ -1,12 +1,27 @@
 require "fileutils"
 
+ROOT_DIR = File.expand_path("..", __dir__)
+IOS_OUTPUT_DIR = ENV.fetch("IOS_ARTIFACT_DIR", File.join(ROOT_DIR, "fastlane/build/ios"))
+ANDROID_OUTPUT_DIR = ENV.fetch("ANDROID_ARTIFACT_DIR", File.join(ROOT_DIR, "fastlane/build/android"))
+ANDROID_BUNDLE_ROOT = ENV.fetch("ANDROID_BUNDLE_OUTPUT_DIR", File.join(ROOT_DIR, "android/app/build/outputs/bundle"))
+ANDROID_BUNDLE_PATH = ENV["ANDROID_RELEASE_BUNDLE_PATH"]
+
+def resolve_android_bundle(build_type)
+  return File.expand_path(ANDROID_BUNDLE_PATH, ROOT_DIR) if ANDROID_BUNDLE_PATH
+
+  bundle_dir = File.join(ANDROID_BUNDLE_ROOT, build_type.downcase)
+  bundles = Dir.glob(File.join(bundle_dir, "*.aab"))
+  UI.user_error!("No Android App Bundle found in #{bundle_dir}") if bundles.empty?
+
+  bundles.max_by { |path| File.mtime(path) }
+end
+
 default_platform(:ios)
 
 platform :ios do
   desc "Build and upload to TestFlight"
   lane :release do
-    output_dir = File.expand_path("fastlane/build/ios")
-    FileUtils.mkdir_p(output_dir)
+    FileUtils.mkdir_p(IOS_OUTPUT_DIR)
 
     sh("bash scripts/compile-turbo-modules.sh")
 
@@ -14,8 +29,8 @@ platform :ios do
       workspace: "ios/JunoNative.xcworkspace",
       scheme: "JunoNative",
       export_method: "app-store",
-      output_directory: output_dir,
-      output_name: "JunoNative.ipa"
+      output_directory: IOS_OUTPUT_DIR,
+      output_name: ENV.fetch("IOS_OUTPUT_NAME", "JunoNative.ipa")
     )
 
     upload_to_testflight
@@ -24,24 +39,25 @@ end
 
 platform :android do
   desc "Build and upload to Play Console internal track"
-  lane :release do
-    output_dir = File.expand_path("fastlane/build/android")
-    FileUtils.mkdir_p(output_dir)
+  lane :release do |options|
+    FileUtils.mkdir_p(ANDROID_OUTPUT_DIR)
 
     sh("bash scripts/compile-turbo-modules.sh")
 
+    build_type = options[:build_type] || ENV.fetch("ANDROID_BUILD_TYPE", "Release")
+
     gradle(
       task: "bundle",
-      build_type: "Release",
-      project_dir: "android",
+      build_type: build_type,
+      project_dir: "android"
     )
 
-    release_bundle = File.expand_path("android/app/build/outputs/bundle/release/app-release.aab")
-    unless File.exist?(release_bundle)
-      UI.user_error!("Android App Bundle not found at #{release_bundle}")
-    end
+    release_bundle = resolve_android_bundle(build_type)
 
-    archived_bundle = File.join(output_dir, "app-release.aab")
+    archived_bundle = File.join(
+      ANDROID_OUTPUT_DIR,
+      ENV.fetch("ANDROID_BUNDLE_NAME", File.basename(release_bundle))
+    )
     FileUtils.cp(release_bundle, archived_bundle)
 
     upload_to_play_store(track: "internal", aab: archived_bundle)
