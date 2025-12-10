@@ -85,6 +85,10 @@ Java_com_pulsr_junonative_JunoEngineModule_nativeSetParam(JNIEnv *env,
                                                           jobject /*thiz*/,
                                                           jstring id,
                                                           jfloat val) {
+    if (id == nullptr) {
+        return;
+    }
+
     const char *cid = env->GetStringUTFChars(id, nullptr);
     std::shared_ptr<JunoAudioEngine> localEngine;
     {

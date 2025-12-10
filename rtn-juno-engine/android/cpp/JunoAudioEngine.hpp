@@ -8,6 +8,13 @@
 class JunoAudioEngine {
 public:
     JunoAudioEngine();
+    ~JunoAudioEngine();
+
+    JunoAudioEngine(const JunoAudioEngine &) = delete;
+    JunoAudioEngine &operator=(const JunoAudioEngine &) = delete;
+    JunoAudioEngine(JunoAudioEngine &&) noexcept = default;
+    JunoAudioEngine &operator=(JunoAudioEngine &&) noexcept = default;
+
     bool start(int sampleRate, int bufferSize);
     void stop();
 

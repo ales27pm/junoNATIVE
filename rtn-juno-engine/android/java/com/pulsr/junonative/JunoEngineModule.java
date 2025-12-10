@@ -29,6 +29,12 @@ public class JunoEngineModule extends ReactContextBaseJavaModule {
     return NAME;
   }
 
+  @Override
+  public void onCatalystInstanceDestroy() {
+    nativeStop();
+    super.onCatalystInstanceDestroy();
+  }
+
   @ReactMethod
   public void start(int sr, int bs, Promise promise) {
     boolean started = nativeStart(sr, bs);

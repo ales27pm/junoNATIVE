@@ -4,6 +4,10 @@ JunoAudioEngine::JunoAudioEngine() {
     dsp_ = std::make_unique<JunoDSPEngine>();
 }
 
+JunoAudioEngine::~JunoAudioEngine() {
+    stop();
+}
+
 bool JunoAudioEngine::start(int sr, int bs) {
     if (!dsp_) {
         dsp_ = std::make_unique<JunoDSPEngine>();
