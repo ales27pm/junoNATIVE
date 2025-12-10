@@ -4,6 +4,7 @@
 #include <memory>
 #include <mutex>
 #include <atomic>
+#include <dispatch/dispatch.h>
 
 // GPU-side per-voice parameters. This is intentionally minimal so
 // it can be filled from JunoVoice state without tight coupling.
@@ -45,7 +46,7 @@ private:
     id<MTLBuffer> globalBuf_[3] = {nil, nil, nil};
     id<MTLBuffer> outBuf_[3]    = {nil, nil, nil};
 
-    std::atomic<int> current_;
+    std::atomic<int> readyIndex_;
     std::mutex lock_;
     int polyphony_ = 8;
     int maxFrames_ = 512;
@@ -53,4 +54,8 @@ private:
     float masterVolume_ = 0.8f;
     float subLevel_ = 0.0f;
     bool init_ = false;
+
+    dispatch_semaphore_t inflight_ = nil;
+    int submitIndex_ = 0;
+    std::vector<VoiceGPUParams> voiceCache_;
 };
