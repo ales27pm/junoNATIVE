@@ -1,0 +1,64 @@
+cmake_minimum_required(VERSION 3.16)
+project(JunoNativeDSP LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+# Configurable DSP test parameters (overridable by CI matrix)
+set(TEST_SAMPLE_RATE 44100 CACHE STRING "Sample rate used by DSP tests")
+set(TEST_BUFFER_SIZE 128 CACHE STRING "Buffer size used by DSP tests")
+set(TEST_POLYPHONY 8 CACHE STRING "Polyphony used by DSP tests")
+
+# ------------------------------------------------------------
+# GoogleTest via FetchContent (self-contained test setup)
+# ------------------------------------------------------------
+include(FetchContent)
+
+FetchContent_Declare(
+  googletest
+  URL https://github.com/google/googletest/archive/refs/tags/v1.15.2.zip
+  URL_HASH SHA256=bf341d8f3a8cc3b2d9f2bfb0b7b0a4a319e1b0a2bcb0f7b4a4a3b7d2a4e5c6f1
+)
+
+# For Windows shared CRT handling, keep default.
+set(gtest_force_shared_crt ON CACHE BOOL "Use shared CRT" FORCE)
+
+FetchContent_MakeAvailable(googletest)
+
+enable_testing()
+
+# ------------------------------------------------------------
+# DSP engine subdirectory (assumes your engine CMakeLists exists there)
+# ------------------------------------------------------------
+set(TEST_SRC
+  tests/dsp/cpu_bench.cpp
+  tests/dsp/latency_test.cpp
+  tests/integration/render_consistency.cpp
+  # Add new test files here
+)
+
+add_executable(juno_tests ${TEST_SRC})
+
+target_include_directories(juno_tests PRIVATE
+  rtn-juno-engine/cpp/engine
+  rtn-juno-engine/cpp/dsp
+)
+
+target_compile_definitions(juno_tests PRIVATE
+  TEST_SAMPLE_RATE=${TEST_SAMPLE_RATE}
+  TEST_BUFFER_SIZE=${TEST_BUFFER_SIZE}
+  TEST_POLYPHONY=${TEST_POLYPHONY}
+)
+
+# ------------------------------------------------------------
+# DSP engine subdirectory (assumes your engine CMakeLists exists there)
+# ------------------------------------------------------------
+add_subdirectory(rtn-juno-engine/cpp/engine)
+
+target_link_libraries(juno_tests PRIVATE
+  gtest_main
+  juno_engine
+)
+
+add_test(NAME juno_tests COMMAND juno_tests)

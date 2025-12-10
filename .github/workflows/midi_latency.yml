@@ -1,0 +1,22 @@
+name: MIDI-Latency Sim
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  latency:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure CMake
+        run: cmake -S . -B build
+
+      - name: Build tests
+        run: cmake --build build --config Release
+
+      - name: Run MIDI-focused tests
+        run: ctest --test-dir build -R MIDI --output-on-failure

@@ -1,0 +1,25 @@
+default_platform(:ios)
+
+platform :ios do
+  desc "Build and upload to TestFlight"
+  lane :release do
+    build_app(
+      workspace: "ios/JunoNative.xcworkspace",
+      scheme: "JunoNative",
+      export_method: "app-store"
+    )
+    upload_to_testflight
+  end
+end
+
+platform :android do
+  desc "Build and upload to Play Console internal track"
+  lane :release do
+    gradle(
+      task: "bundle",
+      build_type: "Release",
+      project_dir: "android"
+    )
+    upload_to_play_store(track: "internal")
+  end
+end

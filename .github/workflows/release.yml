@@ -1,0 +1,92 @@
+name: Release QA Build
+
+on:
+  workflow_run:
+    workflows: ["CI"] # A new, single workflow that runs all builds
+    types: [completed]
+  workflow_dispatch:
+
+jobs:
+  ios_release:
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.2"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install JS deps and Fastlane
+        run: |
+          npm ci --prefix Juno-Native
+          gem install fastlane
+
+      # Optional version bump script; ensure scripts/bumpVersion.js exists if you keep this.
+      - name: Bump version (optional)
+        run: |
+          if [ -f scripts/bumpVersion.js ]; then
+            node scripts/bumpVersion.js
+          else
+            echo "scripts/bumpVersion.js missing, skipping version bump"
+          fi
+
+      - name: Prepare App Store Connect API key
+        shell: bash
+        env:
+          APPLE_API_KEY_JSON: ${{ secrets.APPLE_API_KEY_JSON }}
+        run: |
+          set -euo pipefail
+          umask 177
+          cat > ./asc_key.json << EOF
+          ${APPLE_API_KEY_JSON}
+          EOF
+          test -s ./asc_key.json
+
+      - name: iOS Fastlane release
+        env:
+          APP_STORE_CONNECT_API_KEY_PATH: ./asc_key.json
+        run: |
+          fastlane ios release
+          rm -f ./asc_key.json
+  
+  android_release:
+    needs: ios_release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.2"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install JS deps and Fastlane
+        run: |
+          npm ci --prefix Juno-Native
+          gem install fastlane
+
+      - name: Android Fastlane release
+        run: fastlane android release
+        env:
+          SUPPLY_JSON_KEY_DATA: ${{ secrets.GOOGLE_PLAY_JSON }}

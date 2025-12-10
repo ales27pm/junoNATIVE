@@ -1,0 +1,36 @@
+name: Jest + DSP Tests
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install JS dependencies
+        working-directory: Juno-Native
+        run: npm ci
+
+      - name: Run Jest tests
+        working-directory: Juno-Native
+        run: npm test -- --coverage
+
+      - name: Configure CMake
+        run: cmake -S . -B build
+
+      - name: Build C++ tests
+        run: cmake --build build --config Debug
+
+      - name: Run C++ DSP tests
+        run: ctest --test-dir build --output-on-failure -C Debug
