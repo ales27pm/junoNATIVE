@@ -46,29 +46,6 @@ void JunoDSPEngine::noteOff(int note) {
 
 void JunoDSPEngine::setParameter(const std::string &id, float v) {
     params_.set(id, v);
-void JunoDSPEngine::noteOff(int note) {
-    // Find any voice playing this note and trigger its release.
-    for (auto &v : voices_) {
-        if (v->isActive() && v->getMidiNote() == note) {
-            v->noteOff();
-        }
-    }
-
-    float cutoffNorm    = map01(p.vcfCutoff);
-    // 50 Hz → 15 kHz log curve
-    float cutoffHz      = std::exp(std::log(50.0f) +
-                             (std::log(15000.0f) - std::log(50.0f)) * cutoffNorm);
-
-    float resonanceNorm = map01(p.vcfResonance); // 0..1
-    float attackTime    = 0.0015f * std::pow(10.0f, map01(p.envAttack) * 3.0f);
-    float releaseTime   = 0.0015f * std::pow(10.0f, map01(p.envRelease) * 3.6f);
-    float subLevel      = map01(p.dcoSubLevel);
-
-    setParameter("cutoff",    cutoffHz);
-    setParameter("resonance", resonanceNorm);
-    setParameter("attack",    attackTime);
-    setParameter("release",   releaseTime);
-    setParameter("subLevel",  subLevel);
 }
 
 void JunoDSPEngine::renderAudio(float *L, float *R, int n) {
