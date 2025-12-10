@@ -54,14 +54,14 @@ if File.exist?(react_native_pods)
   target 'JunoNative' do
     use_expo_modules! if defined?(use_expo_modules!)
 
-    config = if File.directory?(community_cli_path)
-      use_native_modules!(
-        package_json_path: File.expand_path('../Juno-Native/package.json', __dir__)
-      )
-    else
-      Pod::UI.puts 'React Native CLI not found; skipping native module autolinking.'
-      { reactNativePath: react_native_path }
+    unless File.directory?(community_cli_path)
+      Pod::UI.puts "React Native CLI not found at #{community_cli_path}; install dev dependency @react-native-community/cli before running pod install."
+      raise Pod::Informative, 'Missing React Native CLI; install it to enable native module autolinking.'
     end
+
+    config = use_native_modules!(
+      package_json_path: File.expand_path('../Juno-Native/package.json', __dir__)
+    )
 
     config[:reactNativePath] = react_native_path
     config[:reactNativePath] = File.expand_path(config[:reactNativePath]) if config[:reactNativePath]
