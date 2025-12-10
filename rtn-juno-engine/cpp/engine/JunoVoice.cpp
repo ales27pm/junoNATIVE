@@ -16,6 +16,7 @@ void JunoVoice::noteOn(int midiNote, float vel) {
     envLevel_  = 0.0f;
     envTarget_ = 1.0f;
     phase_     = 0.0f;
+    subPhase_  = 0.0f;
 }
 
 void JunoVoice::noteOff(int midiNote) {
@@ -48,22 +49,7 @@ void JunoVoice::setParam(const std::string &id, float v) {
 }
 
 void JunoVoice::process(float &L, float &R) {
-    if (!active_) return;
-
-    // Envelope follower (simple one-pole towards envTarget)
-    float envRate = (envTarget_ > envLevel_) ? attack_ : release_;
-    float step    = envRate / std::max(sampleRate_, 1.0f);
-    envLevel_ += (envTarget_ - envLevel_) * step;
-
-    if (envLevel_ < 1e-4f && envTarget_ == 0.0f) {
-        active_ = false;
-        midiNote_ = -1;
-        return;
-    }
-
-    // Simple sawtooth oscillator with PWM-like modulation
-    phase_ += frequency_ / std::max(sampleRate_, 1.0f);
-    if (phase_ >= 1.0f) phase_ -= 1.0f;
+    if (!stepEnvelopeAndPhase()) return;
 
     float pwm = 0.5f + (pwmDepth_ - 0.5f); // keep in 0..1
     pwm = std::clamp(pwm, 0.05f, 0.95f);
@@ -72,8 +58,7 @@ void JunoVoice::process(float &L, float &R) {
                                :  1.0f - ((phase_ - pwm) / (1.0f - pwm)) * 2.0f;
 
     // Sub oscillator at half frequency (square-ish)
-    float subPhase = std::fmod(phase_ * 0.5f, 1.0f);
-    float sub = (subPhase < 0.5f ? 1.0f : -1.0f) * subLevel_;
+    float sub = (subPhase_ < 0.5f ? 1.0f : -1.0f) * subLevel_;
 
     float mixed = osc + sub;
 
@@ -87,4 +72,38 @@ void JunoVoice::process(float &L, float &R) {
 
     L += outL * envLevel_ * velocity_;
     R += outR * envLevel_ * velocity_;
+}
+
+void JunoVoice::advanceState(int numFrames) {
+    for (int i = 0; i < numFrames; ++i) {
+        if (!stepEnvelopeAndPhase()) {
+            return;
+        }
+    }
+}
+
+bool JunoVoice::stepEnvelopeAndPhase() {
+    if (!active_) {
+        return false;
+    }
+
+    // Envelope follower (simple one-pole towards envTarget)
+    float envRate = (envTarget_ > envLevel_) ? attack_ : release_;
+    float step    = envRate / std::max(sampleRate_, 1.0f);
+    envLevel_ += (envTarget_ - envLevel_) * step;
+
+    if (envLevel_ < 1e-4f && envTarget_ == 0.0f) {
+        active_ = false;
+        midiNote_ = -1;
+        return false;
+    }
+
+    // Simple sawtooth oscillator with PWM-like modulation
+    phase_ += frequency_ / std::max(sampleRate_, 1.0f);
+    if (phase_ >= 1.0f) phase_ -= 1.0f;
+
+    subPhase_ += (frequency_ * 0.5f) / std::max(sampleRate_, 1.0f);
+    if (subPhase_ >= 1.0f) subPhase_ -= 1.0f;
+
+    return true;
 }

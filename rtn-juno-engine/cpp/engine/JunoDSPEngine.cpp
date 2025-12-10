@@ -33,9 +33,13 @@ bool JunoDSPEngine::initialize(int sr, int bs, int poly, bool gpuFlag) {
         if (!gpu_->initialize(static_cast<float>(sampleRate_), poly, bufferSize_)) {
             gpu_.reset();
             useGPU_ = false;
+            gpuVoiceCache_.reset();
+        } else {
+            gpuVoiceCache_ = std::make_unique<std::vector<VoiceGPUParams>>(voices_.size());
         }
     } else {
         gpu_.reset();
+        gpuVoiceCache_.reset();
     }
 
     running_.store(true, std::memory_order_release);
@@ -70,9 +74,6 @@ void JunoDSPEngine::noteOff(int note) {
 
 void JunoDSPEngine::setParameter(const std::string &id, float v) {
     params_.set(id, v);
-    for (auto &voice : voices_) {
-        voice->setParam(id, v);
-    }
 }
 
 void JunoDSPEngine::loadPatch(const Juno106::JunoPatch &p) {
@@ -99,24 +100,35 @@ void JunoDSPEngine::loadPatch(const Juno106::JunoPatch &p) {
 void JunoDSPEngine::renderAudio(float *L, float *R, int n) {
     if (!running_.load(std::memory_order_acquire) || !L || !R || n <= 0) return;
 
-    if (useGPU_ && gpu_) {
-        // Collect voice state for GPU
-        std::vector<VoiceGPUParams> gpuVoices;
-        gpuVoices.resize(voices_.size());
-        for (std::size_t i = 0; i < voices_.size(); ++i) {
-            const auto &v = voices_[i];
-            VoiceGPUParams &vp = gpuVoices[i];
-            vp.frequency  = v->frequency_;
-            vp.velocity   = v->velocity_;
-            vp.envelope   = v->envelopeLevel();
-            vp.phase[0]   = v->phase();
-            vp.phase[1]   = 0.0f;
-            vp.phase[2]   = 0.0f;
-            vp.pulseWidth = v->pulseWidth();
-            vp.active     = v->isActive() ? 1u : 0u;
+    // Apply any pending parameter changes on the audio thread to avoid races.
+    RCUParameterManager::ParamChange change;
+    while (params_.tryPop(change)) {
+        for (auto &voice : voices_) {
+            voice->setParam(change.id, change.value);
         }
-        gpu_->updateVoices(gpuVoices);
+    }
+
+    if (useGPU_ && gpu_) {
+        // Collect voice state for GPU without heap allocations on the audio thread.
+        if (gpuVoiceCache_ && gpuVoiceCache_->size() >= voices_.size()) {
+            for (std::size_t i = 0; i < voices_.size(); ++i) {
+                const auto &v = voices_[i];
+                VoiceGPUParams &vp = (*gpuVoiceCache_)[i];
+                vp.frequency  = v->frequency_;
+                vp.velocity   = v->velocity_;
+                vp.envelope   = v->envelopeLevel();
+                vp.phase[0]   = v->phase();
+                vp.phase[1]   = 0.0f;
+                vp.phase[2]   = 0.0f;
+                vp.pulseWidth = v->pulseWidth();
+                vp.active     = v->isActive() ? 1u : 0u;
+            }
+            gpu_->updateVoices(*gpuVoiceCache_);
+        }
         gpu_->render(L, R, n);
+        for (auto &voice : voices_) {
+            voice->advanceState(n);
+        }
         return;
     }
 

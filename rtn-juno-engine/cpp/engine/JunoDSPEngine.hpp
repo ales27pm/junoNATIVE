@@ -7,6 +7,7 @@
 #include <atomic>
 
 class JunoRenderEngine; // Forward declaration
+struct VoiceGPUParams;
 
 namespace Juno106 {
     struct JunoPatch; // Real definition lives in parser header
@@ -35,4 +36,5 @@ private:
     bool useGPU_     = false;
 
     std::unique_ptr<JunoRenderEngine> gpu_;
+    std::unique_ptr<std::vector<VoiceGPUParams>> gpuVoiceCache_;
 };

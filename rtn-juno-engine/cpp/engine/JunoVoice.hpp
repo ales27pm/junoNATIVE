@@ -9,6 +9,7 @@ public:
     void initialize(float sampleRate);
     void noteOn(int midiNote, float velocity);
     void noteOff(int midiNote);
+    void advanceState(int numFrames);
     void setParam(const std::string &id, float value);
     void process(float &left, float &right);
     bool isActive() const;
@@ -36,7 +37,10 @@ private:
     float resonance_  = 0.1f;
     float subLevel_   = 0.0f;
     float pwmDepth_   = 0.5f;
+    float subPhase_   = 0.0f;
 
     NonlinearVCF filter_;
     BBDChorus    chorus_;
+
+    bool stepEnvelopeAndPhase();
 };

@@ -55,6 +55,14 @@ RCT_EXPORT_METHOD(initialize:(NSDictionary *)config)
     NSLog(@"[RTNJunoEngine] AVAudioSession error: %@", sessionError);
   }
   [session setPreferredSampleRate:sr error:&sessionError];
+  if (sessionError) {
+    NSLog(@"[RTNJunoEngine] Failed to set preferred sample rate: %@", sessionError);
+    [self sendEventWithName:EVENT_ERROR
+                       body:@{ @"message": @"Failed to set preferred sample rate" }];
+    sr = (int)session.sampleRate;
+  } else {
+    sr = (int)session.sampleRate;
+  }
 
   _dspEngine = std::make_unique<JunoDSPEngine>();
   if (!_dspEngine->initialize(sr, bs, 8, gpu)) {
