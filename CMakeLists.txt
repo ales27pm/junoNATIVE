@@ -50,9 +50,14 @@ target_compile_definitions(juno_tests PRIVATE
   TEST_POLYPHONY=${TEST_POLYPHONY}
 )
 
+# ------------------------------------------------------------
+# DSP engine subdirectory (assumes your engine CMakeLists exists there)
+# ------------------------------------------------------------
+add_subdirectory(rtn-juno-engine/cpp/engine)
+
 target_link_libraries(juno_tests PRIVATE
   gtest_main
-  juno_engine               # Provided by rtn-juno-engine/cpp/engine CMake
+  juno_engine
 )
 
 add_test(NAME juno_tests COMMAND juno_tests)
