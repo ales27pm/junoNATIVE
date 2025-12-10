@@ -16,6 +16,7 @@ jobs:
           node-version: 20
 
       - name: Setup Java
+        id: setup_java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -30,10 +31,15 @@ jobs:
       - name: Build Android Debug
         working-directory: rtn-juno-engine/android
         env:
-          JAVA_HOME: ${{ steps.setupjava.outputs.path }}
+          JAVA_HOME: ${{ steps.setup_java.outputs.path }}
           ANDROID_SDK_ROOT: ${{ env.ANDROID_SDK_ROOT }}
         run: |
           set -euo pipefail
+          if [ ! -f ./gradlew ]; then
+            echo "gradlew not found; skipping Android build for native engine."
+            exit 0
+          fi
+
           export PATH="$JAVA_HOME/bin:$PATH"
           # sdkmanager closes stdin early after accepting all licenses, which can
           # raise SIGPIPE for the `yes` process when pipefail is enabled. Temporarily
