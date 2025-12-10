@@ -52,8 +52,7 @@ void JunoVoice::setParam(const std::string &id, float v) {
 void JunoVoice::process(float &L, float &R) {
     if (!stepEnvelopeAndPhase()) return;
 
-    float pwm = 0.5f + (pwmDepth_ - 0.5f); // keep in 0..1
-    pwm = std::clamp(pwm, 0.05f, 0.95f);
+    float pwm = std::clamp(pwmDepth_, 0.05f, 0.95f);
 
     float osc = (phase_ < pwm) ? -1.0f + (phase_ / pwm) * 2.0f
                                :  1.0f - ((phase_ - pwm) / (1.0f - pwm)) * 2.0f;
