@@ -30,10 +30,12 @@ enable_testing()
 # ------------------------------------------------------------
 # DSP engine subdirectory (assumes your engine CMakeLists exists there)
 # ------------------------------------------------------------
-add_subdirectory(rtn-juno-engine/cpp/engine)
-
-# ------------------------------------------------------------
-# Unit tests & benchmarks
+set(TEST_SRC
+  tests/dsp/cpu_bench.cpp
+  tests/dsp/latency_test.cpp
+  tests/integration/render_consistency.cpp
+  # Add new test files here
+)
 # ------------------------------------------------------------
 set(TEST_SRC
   tests/dsp/cpu_bench.cpp
