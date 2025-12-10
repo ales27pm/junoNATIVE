@@ -22,17 +22,22 @@ jobs:
         run: pod install --repo-update
 
       - name: Build iOS simulator app
+        env:
+          DERIVED_DATA: build
         run: |
           xcodebuild \
             -workspace ios/JunoNative.xcworkspace \
             -scheme JunoNative \
             -sdk iphonesimulator \
             -configuration Debug \
-            -derivedDataPath build \
+            -derivedDataPath "$DERIVED_DATA" \
             build
+          echo "Derived data located at: $DERIVED_DATA"
+          ls -la "$DERIVED_DATA/Build/Products/Debug-iphonesimulator" || true
 
       - name: Upload iOS simulator build
         uses: actions/upload-artifact@v4
         with:
           name: JunoNative-iOS-sim-build
-          path: build/Build/Products/Debug-iphonesimulator/JunoNative.app
+          path: build/Build/Products/Debug-iphonesimulator/*.app
+          if-no-files-found: error
