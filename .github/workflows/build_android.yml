@@ -28,6 +28,7 @@ jobs:
       - name: Build Android Debug
         run: |
           cd rtn-juno-engine/android
+          chmod +x ./gradlew
           ./gradlew assembleDebug --no-daemon
 
       - name: Upload debug APK
