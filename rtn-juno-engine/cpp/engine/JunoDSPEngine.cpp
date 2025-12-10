@@ -1,18 +1,6 @@
 #include "JunoDSPEngine.hpp"
 #include <algorithm>
 
-namespace Juno106 {
-    struct JunoPatch {
-        // Minimal subset needed by this engine. If you already have a richer
-        // JunoPatch in your project, remove this and include the real header.
-        unsigned char vcfCutoff   = 100;
-        unsigned char vcfResonance= 20;
-        unsigned char envAttack   = 20;
-        unsigned char envRelease  = 40;
-        unsigned char dcoSubLevel = 0;
-    };
-}
-
 bool JunoDSPEngine::initialize(int sr, int bs, int poly, bool gpu) {
     sampleRate_ = sr;
     bufferSize_ = bs;
@@ -47,11 +35,8 @@ void JunoDSPEngine::noteOn(int note, float vel) {
 }
 
 void JunoDSPEngine::noteOff(int note) {
-    // For a simple synth, we just let all active voices release when that note
-    // is turned off; you can extend this to per-note tracking.
-    (void)note;
     for (auto &v : voices_) {
-        v->noteOff();
+        v->noteOff(note);
     }
 }
 

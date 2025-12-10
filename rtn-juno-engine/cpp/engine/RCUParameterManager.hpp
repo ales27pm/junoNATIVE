@@ -1,7 +1,6 @@
 #pragma once
 #include <unordered_map>
 #include <string>
-#include <atomic>
 #include <mutex>
 
 class RCUParameterManager {
@@ -11,5 +10,5 @@ public:
 
 private:
     mutable std::mutex mutex_;
-    std::unordered_map<std::string, std::atomic<float>> params_;
+    std::unordered_map<std::string, float> params_;
 };

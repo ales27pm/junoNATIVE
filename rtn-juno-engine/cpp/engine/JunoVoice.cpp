@@ -14,9 +14,11 @@ void JunoVoice::noteOn(int midiNote, float vel) {
     envLevel_  = 0.0f;
     envTarget_ = 1.0f;
     phase_     = 0.0f;
+    midiNote_  = midiNote;
 }
 
-void JunoVoice::noteOff() {
+void JunoVoice::noteOff(int midiNote) {
+    if (midiNote_ != midiNote) return;
     // Let envelope decay
     envTarget_ = 0.0f;
 }
@@ -45,12 +47,14 @@ void JunoVoice::process(float &L, float &R) {
     if (!active_) return;
 
     // Envelope follower (simple one-pole towards envTarget)
-    float envRate = (envTarget_ > envLevel_) ? attack_ : release_;
-    float step    = envRate / std::max(sampleRate_, 1.0f);
+    float envTime = (envTarget_ > envLevel_) ? attack_ : release_;
+    float denom   = std::max(envTime * sampleRate_, 1.0f);
+    float step    = 1.0f / denom;
     envLevel_ += (envTarget_ - envLevel_) * step;
 
     if (envLevel_ < 1e-4f && envTarget_ == 0.0f) {
         active_ = false;
+        midiNote_ = -1;
         return;
     }
 

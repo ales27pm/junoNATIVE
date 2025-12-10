@@ -26,7 +26,7 @@ public:
 
         const float fc = cutoffHz / sampleRate_;
         // bilinear transform approx for one-pole
-        const float x = std::exp(-2.0f * static_cast<float>(M_PI) * fc);
+        const float x = std::exp(-2.0f * kPi * fc);
         const float g = 1.0f - x;
 
         // Simple feedback from last stage
@@ -49,4 +49,6 @@ private:
         // tanh-style soft clip
         return std::tanh(x * 1.5f);
     }
+
+    static inline constexpr float kPi = 3.14159265358979323846f;
 };

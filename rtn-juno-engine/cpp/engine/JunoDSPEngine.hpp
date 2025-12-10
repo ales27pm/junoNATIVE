@@ -6,7 +6,13 @@
 #include <string>
 
 namespace Juno106 {
-    struct JunoPatch; // Forward declaration; real definition lives in your parser.
+    struct JunoPatch {
+        unsigned char vcfCutoff   = 100;
+        unsigned char vcfResonance= 20;
+        unsigned char envAttack   = 20;
+        unsigned char envRelease  = 40;
+        unsigned char dcoSubLevel = 0;
+    };
 }
 
 class JunoDSPEngine {

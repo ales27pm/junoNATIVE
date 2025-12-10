@@ -60,8 +60,8 @@ public:
         const float lfoRateR = 1.2f;  // Hz
 
         // Sine LFOs in [−1, 1]
-        float lfoL = std::sin(2.0f * static_cast<float>(M_PI) * lfoPhaseL_);
-        float lfoR = std::sin(2.0f * static_cast<float>(M_PI) * lfoPhaseR_);
+        float lfoL = std::sin(2.0f * kPi * lfoPhaseL_);
+        float lfoR = std::sin(2.0f * kPi * lfoPhaseR_);
 
         float delayL = baseDelay + depth * lfoL;
         float delayR = baseDelay + depth * lfoR;
@@ -96,6 +96,8 @@ private:
     float lfoPhaseR_ = 0.5f;
     float noiseAmount_ = 0.003f;
     std::uint32_t noiseState_ = 0x12345678u;
+
+    static inline constexpr float kPi = 3.14159265358979323846f;
 
     inline void writeSample(float x) {
         if (buffer_.empty()) return;
