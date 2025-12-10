@@ -21,39 +21,49 @@ bool JunoAudioEngine::start(int sr, int bs) {
     }
 
     // Android path uses CPU DSP only (no GPU).
+
     if (!dsp_->initialize(sr, bs, 8, false)) {
         return false;
     }
 
-    AAudioStreamBuilder *builder = nullptr;
+    AAudioStreamBuilder* builder = nullptr;
     aaudio_result_t res = AAudio_createStreamBuilder(&builder);
     if (res != AAUDIO_OK || !builder) {
-        dsp_->stop();
         return false;
     }
 
     AAudioStreamBuilder_setDirection(builder, AAUDIO_DIRECTION_OUTPUT);
     AAudioStreamBuilder_setPerformanceMode(builder, AAUDIO_PERFORMANCE_MODE_LOW_LATENCY);
     AAudioStreamBuilder_setFormat(builder, AAUDIO_FORMAT_PCM_FLOAT);
-    AAudioStreamBuilder_setSampleRate(builder, sr);
     AAudioStreamBuilder_setChannelCount(builder, 2);
+    AAudioStreamBuilder_setSampleRate(builder, sr);
     AAudioStreamBuilder_setFramesPerDataCallback(builder, bs);
     AAudioStreamBuilder_setDataCallback(builder, renderCB, this);
+    AAudioStreamBuilder_setChannelConversionAllowed(builder, AAUDIO_FALSE);
+    AAudioStreamBuilder_setFormatConversionAllowed(builder, AAUDIO_FALSE);
 
     res = AAudioStreamBuilder_openStream(builder, &stream_);
     AAudioStreamBuilder_delete(builder);
-
     if (res != AAUDIO_OK || !stream_) {
         stream_ = nullptr;
-        dsp_->stop();
+        return false;
+    }
+
+    // Validate stream matches our callback expectations (stereo, float, interleaved)
+    if (AAudioStream_getChannelCount(stream_) != 2 ||
+        AAudioStream_getFormat(stream_) != AAUDIO_FORMAT_PCM_FLOAT ||
+        AAudioStream_getDataCallbackResult(stream_) != AAUDIO_CALLBACK_RESULT_CONTINUE) {
+        AAudioStream_close(stream_);
+        stream_ = nullptr;
         return false;
     }
 
     const int32_t callbackFrames = AAudioStream_getFramesPerDataCallback(stream_);
     const int32_t capacityFrames = AAudioStream_getBufferCapacityInFrames(stream_);
-    const size_t targetFrames    = static_cast<size_t>(std::max({bs,
-                                                             callbackFrames > 0 ? callbackFrames : 0,
-                                                             capacityFrames > 0 ? capacityFrames : 0}));
+    const size_t targetFrames = static_cast<size_t>(std::max({ bs,
+        callbackFrames > 0 ? callbackFrames : 0,
+        capacityFrames > 0 ? capacityFrames : 0 }));
+
     ensureBuffers(targetFrames > 0 ? targetFrames : static_cast<size_t>(bs));
 
     res = AAudioStream_requestStart(stream_);
