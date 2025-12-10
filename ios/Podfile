@@ -14,16 +14,22 @@ elsif File.directory?(root_node_modules)
   Pod::UI.puts 'Falling back to ../node_modules for React Native dependencies.'
   root_node_modules
 else
-  workspace_node_modules
+  Pod::UI.puts 'React Native dependencies not found. Run `npm ci --prefix Juno-Native` before installing pods.'
+  raise Pod::Informative, 'Missing node_modules; install JavaScript dependencies and retry.'
 end
 
-react_native_path = File.join(node_modules_path, 'react-native')
+react_native_path = File.expand_path('react-native', node_modules_path)
 react_native_pods = File.join(react_native_path, 'scripts', 'react_native_pods.rb')
 expo_autolinking = File.join(node_modules_path, 'expo-modules-autolinking', 'scripts', 'autolinking.rb')
 community_cli_path = File.join(node_modules_path, '@react-native-community', 'cli')
 xcodebuild_available = system('command -v xcodebuild >/dev/null 2>&1')
 recommended_xcode_version = Gem::Version.new('16.1')
 xcodebuild_version = nil
+
+unless File.directory?(react_native_path)
+  Pod::UI.puts "React Native package not found at #{react_native_path}. Run `npm ci --prefix Juno-Native` to install dependencies."
+  raise Pod::Informative, "Missing React Native at #{react_native_path}"
+end
 
 if xcodebuild_available
   begin
@@ -56,6 +62,9 @@ if File.exist?(react_native_pods)
       Pod::UI.puts 'React Native CLI not found; skipping native module autolinking.'
       { reactNativePath: react_native_path }
     end
+
+    config[:reactNativePath] = react_native_path
+    config[:reactNativePath] = File.expand_path(config[:reactNativePath]) if config[:reactNativePath]
 
     if xcodebuild_supported
       if xcodebuild_version && xcodebuild_version < recommended_xcode_version
