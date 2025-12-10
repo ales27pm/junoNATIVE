@@ -15,11 +15,11 @@ jobs:
         with:
           node-version: 20
 
-      - name: Install JS deps and CocoaPods
-        run: |
-          npm ci --prefix Juno-Native
-          cd ios
-          pod install --repo-update
+      - name: Install JS deps
+        run: npm ci --prefix Juno-Native
+      - name: Install CocoaPods
+        working-directory: ios
+        run: pod install --repo-update
 
       - name: Build iOS simulator app
         run: |
