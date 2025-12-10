@@ -27,7 +27,7 @@ community_cli_candidates = [
 ]
 community_cli_path = community_cli_candidates.find { |path| File.directory?(path) }
 xcodebuild_available = system('command -v xcodebuild >/dev/null 2>&1')
-recommended_xcode_version = Gem::Version.new('16.1')
+minimum_xcode_version = Gem::Version.new('16.1')
 xcodebuild_version = nil
 
 unless File.directory?(react_native_path)
@@ -66,7 +66,7 @@ if File.exist?(react_native_pods)
     cli_entrypoint = [
       File.join(community_cli_path, 'build', 'index.js'),
       File.join(community_cli_path, 'build', 'index.cjs'),
-      File.join(community_cli_path, 'build', 'index.mjs')
+      File.join(community_cli_path, 'build', 'index.mjs'),
     ].find { |candidate| File.exist?(candidate) }
 
     unless cli_entrypoint
@@ -83,9 +83,9 @@ if File.exist?(react_native_pods)
     config[:reactNativePath] = File.expand_path(react_native_path)
 
     if xcodebuild_supported
-      if xcodebuild_version && xcodebuild_version < recommended_xcode_version
-        Pod::UI.puts "xcodebuild version #{xcodebuild_version} is below the recommended #{recommended_xcode_version}; upgrade Xcode to continue."
-        raise Pod::Informative, "React Native requires Xcode >= #{recommended_xcode_version}. Found #{xcodebuild_version}."
+      if xcodebuild_version && xcodebuild_version < minimum_xcode_version
+        Pod::UI.puts "xcodebuild version #{xcodebuild_version} is below the minimum #{minimum_xcode_version}; upgrade Xcode to continue."
+        raise Pod::Informative, "React Native requires Xcode >= #{minimum_xcode_version}. Found #{xcodebuild_version}."
       end
 
       use_react_native!(
