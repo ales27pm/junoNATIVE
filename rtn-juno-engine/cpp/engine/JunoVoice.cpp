@@ -45,11 +45,12 @@ void JunoVoice::setParam(const std::string &id, float v) {
 }
 
 void JunoVoice::processBlock(float *L, float *R, int numFrames) {
-float envRate = (envTarget_ > envLevel_) ? attack_ : release_;
-float g = 1.0f - std::exp(-1.0f / (envRate * std::max(sampleRate_, 1.0f)));
-envLevel_ += (envTarget_ - envLevel_) * g;
+    if (!active_ || !L || !R || numFrames <= 0) return;
+
+    const float freqInc = (sampleRate_ > 0.0f) ? (frequency_ / sampleRate_) : 0.0f;
     const float subFreqInc = freqInc * 0.5f;
-    const float envTime = (envTarget_ > envLevel_) ? attack_ : release_;
+
+    const float envTime  = (envTarget_ > envLevel_) ? attack_ : release_;
     const float envDenom = std::max(envTime * sampleRate_, 1.0f);
     const float envCoeff = std::exp(-1.0f / envDenom);
 
@@ -74,15 +75,12 @@ envLevel_ += (envTarget_ - envLevel_) * g;
         float osc = (phase_ < pwm) ? -1.0f + (phase_ / pwm) * 2.0f
                                    :  1.0f - ((phase_ - pwm) / (1.0f - pwm)) * 2.0f;
 
-        // Sub oscillator at half frequency (square-ish)
         float sub = (subPhase_ < 0.5f ? 1.0f : -1.0f) * subLevel_;
 
         float mixed = osc + sub;
 
-        // Filter
         float filtered = filter_.process(mixed, cutoff_, resonance_);
 
-        // Chorus to stereo
         float outL = 0.0f;
         float outR = 0.0f;
         chorus_.process(filtered, outL, outR);
