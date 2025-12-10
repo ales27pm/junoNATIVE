@@ -5,10 +5,22 @@ source 'https://github.com/CocoaPods/Specs.git'
 install! 'cocoapods', :generate_multiple_pod_projects => true, :integrate_targets => false
 project 'JunoNative.xcodeproj'
 
-react_native_path = File.expand_path('../Juno-Native/node_modules/react-native', __dir__)
+workspace_node_modules = File.expand_path('../Juno-Native/node_modules', __dir__)
+root_node_modules = File.expand_path('../node_modules', __dir__)
+
+node_modules_path = if File.directory?(workspace_node_modules)
+  workspace_node_modules
+elsif File.directory?(root_node_modules)
+  Pod::UI.puts 'Falling back to ../node_modules for React Native dependencies.'
+  root_node_modules
+else
+  workspace_node_modules
+end
+
+react_native_path = File.join(node_modules_path, 'react-native')
 react_native_pods = File.join(react_native_path, 'scripts', 'react_native_pods.rb')
-expo_autolinking = File.expand_path('../Juno-Native/node_modules/expo-modules-autolinking/scripts/autolinking.rb', __dir__)
-community_cli_path = File.expand_path('../Juno-Native/node_modules/@react-native-community/cli', __dir__)
+expo_autolinking = File.join(node_modules_path, 'expo-modules-autolinking', 'scripts', 'autolinking.rb')
+community_cli_path = File.join(node_modules_path, '@react-native-community', 'cli')
 xcodebuild_available = system('command -v xcodebuild >/dev/null 2>&1')
 minimum_xcode_version = Gem::Version.new('16.1')
 xcodebuild_version = nil
