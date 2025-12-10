@@ -13,10 +13,8 @@ public:
     void processBlock(float *left, float *right, int numFrames);
     bool isActive() const;
     int midiNote() const { return midiNote_; }
-
-    // Exposed for GPU bridge / monitoring
-    float frequency_ = 0.0f;
-    float velocity_  = 0.0f;
+    float frequency() const { return frequency_; }
+    float velocity() const { return velocity_; }
 
 private:
     float sampleRate_ = 44100.0f;
@@ -33,6 +31,8 @@ private:
     float resonance_  = 0.1f;
     float subLevel_   = 0.0f;
     float pwmDepth_   = 0.5f;
+    float frequency_  = 0.0f;
+    float velocity_   = 0.0f;
 
     NonlinearVCF filter_;
     BBDChorus    chorus_;

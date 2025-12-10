@@ -69,8 +69,7 @@ void JunoVoice::processBlock(float *L, float *R, int numFrames) {
         subPhase_ += subFreqInc;
         if (subPhase_ >= 1.0f) subPhase_ -= std::floor(subPhase_);
 
-        float pwm = 0.5f + (pwmDepth_ - 0.5f); // keep in 0..1
-        pwm = std::clamp(pwm, 0.05f, 0.95f);
+        float pwm = std::clamp(pwmDepth_, 0.05f, 0.95f);
 
         float osc = (phase_ < pwm) ? -1.0f + (phase_ / pwm) * 2.0f
                                    :  1.0f - ((phase_ - pwm) / (1.0f - pwm)) * 2.0f;

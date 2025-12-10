@@ -46,4 +46,6 @@ bool RCUParameterManager::tryPop(ParamChange &change) {
 void RCUParameterManager::clear() {
     head_.store(0, std::memory_order_release);
     tail_.store(0, std::memory_order_release);
+    std::lock_guard<std::mutex> lock(mutex_);
+    params_.clear();
 }
