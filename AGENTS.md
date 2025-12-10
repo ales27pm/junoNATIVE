@@ -4,13 +4,14 @@ These instructions apply to the entire repository.
 
 ## Workflow
 - The primary app lives under `Juno-Native/`; top-level scripts proxy to that workspace.
-- Use the pinned toolchain (`node >= 18`, `npm >= 11.4.2`) defined in the package manifests.
+- Use the pinned toolchain (`node >= 18`) with **npm 11.4.2** from `packageManager`. To avoid mismatched node/npm pairings, prefer Node **22.x** (ships with npm 10+) and explicitly install npm 11.4.2 via the pinned package manager version. Keep node and npm aligned with the lockfile when scripting CI runners.
 - Favor TypeScript/ESM patterns already used in `Juno-Native`. Avoid introducing stubs or partially implemented flows.
 
 ## Required checks
+Run these from the **repo root** (the directory containing this file):
 - Lint: `npm --prefix Juno-Native run lint`
 - Tests: `npm --prefix Juno-Native run test`
-- Formatting: `npm --prefix Juno-Native run format` (or `check:format` to verify without modifying files)
+- Formatting: `npm --prefix Juno-Native run format` (or `npm --prefix Juno-Native run check:format` to verify without modifying files)
 - Package metadata validation: `npm run validate:packages`
 
 Run the relevant commands for any area you change. Document any skipped checks with a reason.
