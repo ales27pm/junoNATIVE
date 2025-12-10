@@ -103,11 +103,17 @@ void JunoRenderEngine::render(float *L, float *R, int n) {
     }
 
     // If all buffers are in flight, skip scheduling to avoid blocking the audio thread.
-    if (!inflight_ || dispatch_semaphore_wait(inflight_, DISPATCH_TIME_NOW) != 0) {
-        return;
-    }
+    __block dispatch_semaphore_t sem = inflight_semaphores_[bufIndex];
+    [cmd addCompletedHandler:^(id<MTLCommandBuffer> _Nonnull buffer) {
+      dispatch_semaphore_signal(sem);
+    }];
 
-    int bufIndex = submitIndex_;
+    [enc endEncoding];
+    [cmd commit];
+
+    // The previous buffer is now ready to be read.
+    int prevBufIndex = (bufIndex + 2) % 3;
+    float *out = (float *)[outBuf_[prevBufIndex] contents];
     submitIndex_ = (submitIndex_ + 1) % 3;
 
     GlobalGPUParams globals{};
