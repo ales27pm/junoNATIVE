@@ -17,7 +17,7 @@ public:
 
     // Simple 4-pole low-pass ladder-style filter with soft saturation.
     // cutoffHz:   20–20000
-    // resonance:  0.0–1.0 (self-oscillation near 1.0)
+    // resonance:  0.0–1.2 (self-oscillation near 1.0)
     float process(float input, float cutoffHz, float resonance) {
         if (sampleRate_ <= 0.0f) return input;
 
