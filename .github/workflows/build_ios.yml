@@ -36,27 +36,35 @@ jobs:
           echo "Derived data located at: $DERIVED_DATA"
           ls -la "$DERIVED_DATA/Build/Products/Debug-iphonesimulator" || true
 
-      - name: Locate built app bundle(s)
-        id: locate_app
+      - name: Locate built products
+        id: locate_products
         run: |
           shopt -s nullglob
           apps=(build/Build/Products/Debug-iphonesimulator/*.app build/Build/Products/*/*.app)
+          frameworks=(build/Build/Products/Debug-iphonesimulator/*.framework build/Build/Products/*/*.framework)
+          static_libs=(build/Build/Products/Debug-iphonesimulator/*.a build/Build/Products/*/*.a)
 
           if [ ${#apps[@]} -eq 0 ]; then
-            echo "No .app bundles found in build/Build/Products" >&2
+            echo "No .app bundles found; falling back to other build products (frameworks/static libs)" >&2
+          fi
+
+          artifacts=("${apps[@]}" "${frameworks[@]}" "${static_libs[@]}")
+
+          if [ ${#artifacts[@]} -eq 0 ]; then
+            echo "No .app, .framework, or static library artifacts found in build/Build/Products" >&2
             echo "Available products:" >&2
             find build/Build/Products -maxdepth 3 -type d -print 2>/dev/null || true
             exit 1
           fi
 
-          printf '%s\n' "Found app bundle(s):"
-          printf ' - %s\n' "${apps[@]}"
+          printf '%s\n' "Found build artifact(s):"
+          printf ' - %s\n' "${artifacts[@]}"
 
-          { printf 'apps<<EOF\n'; printf '%s\n' "${apps[@]}"; printf 'EOF\n'; } >> "$GITHUB_OUTPUT"
+          { printf 'artifacts<<EOF\n'; printf '%s\n' "${artifacts[@]}"; printf 'EOF\n'; } >> "$GITHUB_OUTPUT"
 
       - name: Upload iOS simulator build
         uses: actions/upload-artifact@v4
         with:
           name: JunoNative-iOS-sim-build
-          path: ${{ steps.locate_app.outputs.apps }}
+          path: ${{ steps.locate_products.outputs.artifacts }}
           if-no-files-found: error
