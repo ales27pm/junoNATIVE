@@ -37,9 +37,17 @@ jobs:
           ANDROID_HOME: ${{ env.ANDROID_SDK_ROOT }}
         run: |
           set -euo pipefail
+          : "${GITHUB_OUTPUT:?Missing GITHUB_OUTPUT for step outputs}"
           echo "apk_built=false" >> "$GITHUB_OUTPUT"
           if [ ! -f ./gradlew ]; then
             echo "gradlew not found; skipping Android build for native engine."
+            if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+              {
+                echo "### Android debug build"
+                echo
+                echo "- Skipped: Gradle wrapper not found in rtn-juno-engine/android."
+              } >>"$GITHUB_STEP_SUMMARY"
+            fi
             exit 0
           fi
 
@@ -55,6 +63,13 @@ jobs:
           ./gradlew clean assembleDebug --no-daemon --stacktrace
 
           echo "apk_built=true" >> "$GITHUB_OUTPUT"
+          if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+            {
+              echo "### Android debug build"
+              echo
+              echo "- Succeeded: APK produced at rtn-juno-engine/android/app/build/outputs/apk/debug/app-debug.apk"
+            } >>"$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Upload debug APK
         if: steps.build_android_debug.outputs.apk_built == 'true'
