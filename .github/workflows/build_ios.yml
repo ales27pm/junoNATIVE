@@ -30,14 +30,33 @@ jobs:
             -scheme JunoNative \
             -sdk iphonesimulator \
             -configuration Debug \
+            -destination 'platform=iOS Simulator,name=iPhone 15 Pro,OS=latest' \
             -derivedDataPath "$DERIVED_DATA" \
             build
           echo "Derived data located at: $DERIVED_DATA"
           ls -la "$DERIVED_DATA/Build/Products/Debug-iphonesimulator" || true
 
+      - name: Locate built app bundle(s)
+        id: locate_app
+        run: |
+          shopt -s nullglob
+          apps=(build/Build/Products/Debug-iphonesimulator/*.app build/Build/Products/*/*.app)
+
+          if [ ${#apps[@]} -eq 0 ]; then
+            echo "No .app bundles found in build/Build/Products" >&2
+            echo "Available products:" >&2
+            find build/Build/Products -maxdepth 3 -type d -print 2>/dev/null || true
+            exit 1
+          fi
+
+          printf '%s\n' "Found app bundle(s):"
+          printf ' - %s\n' "${apps[@]}"
+
+          { printf 'apps<<EOF\n'; printf '%s\n' "${apps[@]}"; printf 'EOF\n'; } >> "$GITHUB_OUTPUT"
+
       - name: Upload iOS simulator build
         uses: actions/upload-artifact@v4
         with:
           name: JunoNative-iOS-sim-build
-          path: build/Build/Products/Debug-iphonesimulator/*.app
+          path: ${{ steps.locate_app.outputs.apps }}
           if-no-files-found: error
