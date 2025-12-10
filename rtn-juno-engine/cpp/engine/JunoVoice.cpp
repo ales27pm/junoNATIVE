@@ -45,9 +45,9 @@ void JunoVoice::setParam(const std::string &id, float v) {
 }
 
 void JunoVoice::processBlock(float *L, float *R, int numFrames) {
-    if (!active_ || !L || !R || numFrames <= 0) return;
-
-    const float freqInc = frequency_ / std::max(sampleRate_, 1.0f);
+float envRate = (envTarget_ > envLevel_) ? attack_ : release_;
+float g = 1.0f - std::exp(-1.0f / (envRate * std::max(sampleRate_, 1.0f)));
+envLevel_ += (envTarget_ - envLevel_) * g;
     const float subFreqInc = freqInc * 0.5f;
     const float envTime = (envTarget_ > envLevel_) ? attack_ : release_;
     const float envDenom = std::max(envTime * sampleRate_, 1.0f);
