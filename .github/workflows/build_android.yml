@@ -32,6 +32,9 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
       - name: Build Android Debug
         working-directory: rtn-juno-engine/android
         env:
@@ -39,6 +42,7 @@ jobs:
           ANDROID_SDK_ROOT: ${{ env.ANDROID_SDK_ROOT }}
         run: |
           export PATH="$JAVA_HOME/bin:$PATH"
+          yes | sdkmanager --licenses
           chmod +x ./gradlew
           ./gradlew clean assembleDebug --no-daemon --stacktrace
 
