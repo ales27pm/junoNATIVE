@@ -27,8 +27,6 @@ jobs:
 
       - name: Build Android Debug
         working-directory: rtn-juno-engine/android
-        env:
-          JAVA_HOME: ${{ env.JAVA_HOME }}
         run: |
           chmod +x ./gradlew
           ./gradlew clean assembleDebug --no-daemon --stacktrace
