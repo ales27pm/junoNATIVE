@@ -6,8 +6,10 @@
 #include <string>
 #include <atomic>
 
+#if defined(__APPLE__)
 class JunoRenderEngine; // Forward declaration
 struct VoiceGPUParams;
+#endif
 
 namespace Juno106 {
     struct JunoPatch; // Real definition lives in parser header
@@ -35,6 +37,8 @@ private:
     std::atomic<bool> running_{false};
     bool useGPU_     = false;
 
+#if defined(__APPLE__)
     std::unique_ptr<JunoRenderEngine> gpu_;
     std::unique_ptr<std::vector<VoiceGPUParams>> gpuVoiceCache_;
+#endif
 };

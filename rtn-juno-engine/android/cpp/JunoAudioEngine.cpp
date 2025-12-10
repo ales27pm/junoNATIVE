@@ -1,4 +1,5 @@
 #include "JunoAudioEngine.hpp"
+#include <algorithm>
 
 JunoAudioEngine::JunoAudioEngine() {
     dsp_ = std::make_unique<JunoDSPEngine>();
@@ -38,8 +39,6 @@ bool JunoAudioEngine::start(int sr, int bs) {
     AAudioStreamBuilder_setFramesPerDataCallback(builder, bs);
     AAudioStreamBuilder_setDataCallback(builder, renderCB, this);
 
-    ensureBuffers(static_cast<size_t>(bs));
-
     res = AAudioStreamBuilder_openStream(builder, &stream_);
     AAudioStreamBuilder_delete(builder);
 
@@ -47,6 +46,13 @@ bool JunoAudioEngine::start(int sr, int bs) {
         stream_ = nullptr;
         return false;
     }
+
+    const int32_t callbackFrames = AAudioStream_getFramesPerDataCallback(stream_);
+    const int32_t capacityFrames = AAudioStream_getBufferCapacityInFrames(stream_);
+    const size_t targetFrames    = static_cast<size_t>(std::max({bs,
+                                                             callbackFrames > 0 ? callbackFrames : 0,
+                                                             capacityFrames > 0 ? capacityFrames : 0}));
+    ensureBuffers(targetFrames > 0 ? targetFrames : static_cast<size_t>(bs));
 
     res = AAudioStream_requestStart(stream_);
     if (res != AAUDIO_OK) {
@@ -74,12 +80,17 @@ JunoAudioEngine::renderCB(AAudioStream * /*stream*/,
                           void *audioData,
                           int32_t frames) {
     auto *self = reinterpret_cast<JunoAudioEngine *>(user);
-    if (!self || !self->dsp_) {
+    if (!self || !self->dsp_ || frames <= 0) {
         return AAUDIO_CALLBACK_RESULT_CONTINUE;
     }
 
     float *buffer = static_cast<float *>(audioData);
-    self->ensureBuffers(static_cast<size_t>(frames));
+
+    if (static_cast<size_t>(frames) > self->leftBuffer_.size() ||
+        static_cast<size_t>(frames) > self->rightBuffer_.size()) {
+        std::fill(buffer, buffer + static_cast<size_t>(frames) * 2, 0.0f);
+        return AAUDIO_CALLBACK_RESULT_CONTINUE;
+    }
 
     self->dsp_->renderAudio(self->leftBuffer_.data(),
                             self->rightBuffer_.data(),
