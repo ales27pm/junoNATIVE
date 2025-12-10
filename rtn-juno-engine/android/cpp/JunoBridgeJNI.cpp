@@ -1,27 +1,51 @@
 #include <jni.h>
 #include <memory>
+#include <mutex>
 #include "JunoAudioEngine.hpp"
 
-static std::unique_ptr<JunoAudioEngine> engine;
+static std::shared_ptr<JunoAudioEngine> engine;
+static std::mutex engineMutex;
 
 extern "C" {
 
-JNIEXPORT void JNICALL
+JNIEXPORT jboolean JNICALL
 Java_com_pulsr_junonative_JunoEngineModule_nativeStart(JNIEnv * /*env*/,
                                                        jobject /*thiz*/,
                                                        jint sr,
                                                        jint bs) {
-    if (!engine) {
-        engine = std::make_unique<JunoAudioEngine>();
+    std::shared_ptr<JunoAudioEngine> localEngine;
+    {
+        std::lock_guard<std::mutex> lock(engineMutex);
+        if (!engine) {
+            engine = std::make_shared<JunoAudioEngine>();
+        }
+        localEngine = engine;
     }
-    engine->start(static_cast<int>(sr), static_cast<int>(bs));
+
+    if (!localEngine) {
+        return JNI_FALSE;
+    }
+
+    const bool started = localEngine->start(static_cast<int>(sr), static_cast<int>(bs));
+    return started ? JNI_TRUE : JNI_FALSE;
 }
 
 JNIEXPORT void JNICALL
 Java_com_pulsr_junonative_JunoEngineModule_nativeStop(JNIEnv * /*env*/,
                                                       jobject /*thiz*/) {
-    if (engine) {
-        engine->stop();
+    std::shared_ptr<JunoAudioEngine> localEngine;
+    {
+        std::lock_guard<std::mutex> lock(engineMutex);
+        localEngine = engine;
+    }
+
+    if (localEngine) {
+        localEngine->stop();
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(engineMutex);
+        engine.reset();
     }
 }
 
@@ -30,8 +54,14 @@ Java_com_pulsr_junonative_JunoEngineModule_nativeNoteOn(JNIEnv * /*env*/,
                                                         jobject /*thiz*/,
                                                         jint note,
                                                         jfloat vel) {
-    if (engine) {
-        engine->noteOn(static_cast<int>(note), static_cast<float>(vel));
+    std::shared_ptr<JunoAudioEngine> localEngine;
+    {
+        std::lock_guard<std::mutex> lock(engineMutex);
+        localEngine = engine;
+    }
+
+    if (localEngine) {
+        localEngine->noteOn(static_cast<int>(note), static_cast<float>(vel));
     }
 }
 
@@ -39,8 +69,14 @@ JNIEXPORT void JNICALL
 Java_com_pulsr_junonative_JunoEngineModule_nativeNoteOff(JNIEnv * /*env*/,
                                                          jobject /*thiz*/,
                                                          jint note) {
-    if (engine) {
-        engine->noteOff(static_cast<int>(note));
+    std::shared_ptr<JunoAudioEngine> localEngine;
+    {
+        std::lock_guard<std::mutex> lock(engineMutex);
+        localEngine = engine;
+    }
+
+    if (localEngine) {
+        localEngine->noteOff(static_cast<int>(note));
     }
 }
 
@@ -50,8 +86,14 @@ Java_com_pulsr_junonative_JunoEngineModule_nativeSetParam(JNIEnv *env,
                                                           jstring id,
                                                           jfloat val) {
     const char *cid = env->GetStringUTFChars(id, nullptr);
-    if (engine && cid) {
-        engine->setParameter(cid, static_cast<float>(val));
+    std::shared_ptr<JunoAudioEngine> localEngine;
+    {
+        std::lock_guard<std::mutex> lock(engineMutex);
+        localEngine = engine;
+    }
+
+    if (localEngine && cid) {
+        localEngine->setParameter(cid, static_cast<float>(val));
     }
     if (cid) {
         env->ReleaseStringUTFChars(id, cid);

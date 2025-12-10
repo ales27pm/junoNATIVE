@@ -1,5 +1,6 @@
 package com.pulsr.junonative;
 
+import com.facebook.react.bridge.Promise;
 import com.facebook.react.bridge.ReactApplicationContext;
 import com.facebook.react.bridge.ReactContextBaseJavaModule;
 import com.facebook.react.bridge.ReactMethod;
@@ -13,7 +14,7 @@ public class JunoEngineModule extends ReactContextBaseJavaModule {
     System.loadLibrary("junobridge");
   }
 
-  private native void nativeStart(int sr, int bs);
+  private native boolean nativeStart(int sr, int bs);
   private native void nativeStop();
   private native void nativeNoteOn(int note, float vel);
   private native void nativeNoteOff(int note);
@@ -29,8 +30,13 @@ public class JunoEngineModule extends ReactContextBaseJavaModule {
   }
 
   @ReactMethod
-  public void start(int sr, int bs) {
-    nativeStart(sr, bs);
+  public void start(int sr, int bs, Promise promise) {
+    boolean started = nativeStart(sr, bs);
+    if (started) {
+      promise.resolve(true);
+    } else {
+      promise.reject("JUNO_START_FAILED", "Failed to start Juno audio engine");
+    }
   }
 
   @ReactMethod

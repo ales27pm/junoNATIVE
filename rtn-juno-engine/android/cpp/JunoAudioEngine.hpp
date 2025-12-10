@@ -2,6 +2,7 @@
 #include <aaudio/AAudio.h>
 #include <memory>
 #include <string>
+#include <vector>
 #include "JunoDSPEngine.hpp"
 
 class JunoAudioEngine {
@@ -16,6 +17,7 @@ public:
     void loadPatch(const Juno106::JunoPatch &patch);
 
 private:
+    void ensureBuffers(size_t frames);
     static aaudio_data_callback_result_t renderCB(AAudioStream *stream,
                                                   void *userData,
                                                   void *audioData,
@@ -23,4 +25,6 @@ private:
 
     AAudioStream *stream_ = nullptr;
     std::unique_ptr<JunoDSPEngine> dsp_;
+    std::vector<float> leftBuffer_;
+    std::vector<float> rightBuffer_;
 };

@@ -1,5 +1,4 @@
 #include "JunoAudioEngine.hpp"
-#include <vector>
 
 JunoAudioEngine::JunoAudioEngine() {
     dsp_ = std::make_unique<JunoDSPEngine>();
@@ -28,6 +27,8 @@ bool JunoAudioEngine::start(int sr, int bs) {
     AAudioStreamBuilder_setChannelCount(builder, 2);
     AAudioStreamBuilder_setFramesPerDataCallback(builder, bs);
     AAudioStreamBuilder_setDataCallback(builder, renderCB, this);
+
+    ensureBuffers(static_cast<size_t>(bs));
 
     res = AAudioStreamBuilder_openStream(builder, &stream_);
     AAudioStreamBuilder_delete(builder);
@@ -66,17 +67,27 @@ JunoAudioEngine::renderCB(AAudioStream * /*stream*/,
     }
 
     float *buffer = static_cast<float *>(audioData);
-    std::vector<float> L(frames);
-    std::vector<float> R(frames);
+    self->ensureBuffers(static_cast<size_t>(frames));
 
-    self->dsp_->renderAudio(L.data(), R.data(), frames);
+    self->dsp_->renderAudio(self->leftBuffer_.data(),
+                            self->rightBuffer_.data(),
+                            frames);
 
     for (int i = 0; i < frames; ++i) {
-        buffer[i * 2]     = L[i];
-        buffer[i * 2 + 1] = R[i];
+        buffer[i * 2]     = self->leftBuffer_[i];
+        buffer[i * 2 + 1] = self->rightBuffer_[i];
     }
 
     return AAUDIO_CALLBACK_RESULT_CONTINUE;
+}
+
+void JunoAudioEngine::ensureBuffers(size_t frames) {
+    if (leftBuffer_.size() < frames) {
+        leftBuffer_.resize(frames);
+    }
+    if (rightBuffer_.size() < frames) {
+        rightBuffer_.resize(frames);
+    }
 }
 
 void JunoAudioEngine::noteOn(int n, float v) {
