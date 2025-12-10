@@ -6,9 +6,9 @@ on:
     types: [completed]
 
 jobs:
-  release:
+  ios_release:
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
-    runs-on: ubuntu-latest
+    runs-on: macos-14
 
     steps:
       - name: Checkout
@@ -39,13 +39,43 @@ jobs:
           fi
 
       - name: iOS Fastlane release
-        run: bundle exec fastlane ios release
+        run: fastlane ios release
         env:
           APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APPLE_KEY_ID }}
           APP_STORE_CONNECT_API_KEY_ISSUER_ID: ${{ secrets.APPLE_ISSUER_ID }}
           APP_STORE_CONNECT_API_KEY: ${{ secrets.APPLE_KEY }}
 
+  android_release:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    needs: ios_release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.2"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup Java
+        uses: actions/setup-java@v3
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install JS deps and Fastlane
+        run: |
+          npm ci
+          gem install fastlane
+
       - name: Android Fastlane release
-        run: bundle exec fastlane android release
+        run: fastlane android release
         env:
           SUPPLY_JSON_KEY_DATA: ${{ secrets.GOOGLE_PLAY_JSON }}

@@ -1,27 +1,60 @@
-#include <gtest/gtest.h>
-#include "JunoDSPEngine.hpp"
 #include <cmath>
+#include <gtest/gtest.h>
+#include <vector>
+
+#include "JunoDSPEngine.hpp"
+
+#ifndef TEST_SAMPLE_RATE
+#define TEST_SAMPLE_RATE 44100
+#endif
+
+#ifndef TEST_BUFFER_SIZE
+#define TEST_BUFFER_SIZE 128
+#endif
+
+#ifndef TEST_POLYPHONY
+#define TEST_POLYPHONY 4
+#endif
 
 TEST(Render, DeterministicOutput) {
+    constexpr int sampleRate = TEST_SAMPLE_RATE;
+    constexpr int bufferSize = TEST_BUFFER_SIZE;
+    constexpr int polyphony = TEST_POLYPHONY;
+    constexpr int blocks = 3;
+
     JunoDSPEngine a;
     JunoDSPEngine b;
 
-    a.initialize(44100, 128, 4, false);
-    b.initialize(44100, 128, 4, false);
+    a.initialize(sampleRate, bufferSize, polyphony, false);
+    b.initialize(sampleRate, bufferSize, polyphony, false);
 
-    float L1[128] = {0.0f};
-    float R1[128] = {0.0f};
-    float L2[128] = {0.0f};
-    float R2[128] = {0.0f};
+    std::vector<float> leftA(bufferSize, 0.0f);
+    std::vector<float> rightA(bufferSize, 0.0f);
+    std::vector<float> leftB(bufferSize, 0.0f);
+    std::vector<float> rightB(bufferSize, 0.0f);
 
-    a.renderAudio(L1, R1, 128);
-    b.renderAudio(L2, R2, 128);
+    double leftDiff = 0.0;
+    double rightDiff = 0.0;
 
-    double diff = 0.0;
-    for (int i = 0; i < 128; ++i) {
-        diff += std::fabs(L1[i] - L2[i]);
+    for (int block = 0; block < blocks; ++block) {
+        std::fill(leftA.begin(), leftA.end(), 0.0f);
+        std::fill(rightA.begin(), rightA.end(), 0.0f);
+        std::fill(leftB.begin(), leftB.end(), 0.0f);
+        std::fill(rightB.begin(), rightB.end(), 0.0f);
+
+        a.renderAudio(leftA.data(), rightA.data(), bufferSize);
+        b.renderAudio(leftB.data(), rightB.data(), bufferSize);
+
+        for (int i = 0; i < bufferSize; ++i) {
+            leftDiff += std::fabs(leftA[i] - leftB[i]);
+            rightDiff += std::fabs(rightA[i] - rightB[i]);
+        }
     }
 
-    double meanDiff = diff / 128.0;
-    EXPECT_LT(meanDiff, 1e-6);
+    const double denom = static_cast<double>(bufferSize * blocks);
+    double meanLeftDiff = leftDiff / denom;
+    double meanRightDiff = rightDiff / denom;
+
+    EXPECT_LT(meanLeftDiff, 1e-6);
+    EXPECT_LT(meanRightDiff, 1e-6);
 }

@@ -28,6 +28,7 @@ jobs:
             -scheme JunoNative \
             -sdk iphonesimulator \
             -configuration Debug \
+            -derivedDataPath build \
             build
 
       - name: Upload iOS simulator build

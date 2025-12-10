@@ -5,6 +5,11 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
+# Configurable DSP test parameters (overridable by CI matrix)
+set(TEST_SAMPLE_RATE 44100 CACHE STRING "Sample rate used by DSP tests")
+set(TEST_BUFFER_SIZE 128 CACHE STRING "Buffer size used by DSP tests")
+set(TEST_POLYPHONY 8 CACHE STRING "Polyphony used by DSP tests")
+
 # ------------------------------------------------------------
 # GoogleTest via FetchContent (self-contained test setup)
 # ------------------------------------------------------------
@@ -51,6 +56,12 @@ add_executable(juno_tests ${TEST_SRC})
 target_include_directories(juno_tests PRIVATE
   rtn-juno-engine/cpp/engine
   rtn-juno-engine/cpp/dsp
+)
+
+target_compile_definitions(juno_tests PRIVATE
+  TEST_SAMPLE_RATE=${TEST_SAMPLE_RATE}
+  TEST_BUFFER_SIZE=${TEST_BUFFER_SIZE}
+  TEST_POLYPHONY=${TEST_POLYPHONY}
 )
 
 target_link_libraries(juno_tests PRIVATE
