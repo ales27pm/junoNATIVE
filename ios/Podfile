@@ -50,9 +50,9 @@ if File.exist?(react_native_pods)
   # so we override the check to allow installs to proceed while still emitting a
   # warning for visibility.
   if xcodebuild_supported && xcodebuild_version && xcodebuild_version < recommended_xcode_version
-    module ReactNativePodsUtils
+    class ReactNativePodsUtils
       def self.check_minimum_required_xcode(**_args)
-        Pod::UI.warn 'Skipping React Native minimum Xcode version enforcement; proceeding with xcodebuild '
+        Pod::UI.warn 'Skipping React Native minimum Xcode version enforcement; proceeding with xcodebuild ' \
           "#{`xcodebuild -version`.lines.first&.strip || 'unknown version'}."
       end
     end
