@@ -22,7 +22,7 @@ react_native_pods = File.join(react_native_path, 'scripts', 'react_native_pods.r
 expo_autolinking = File.join(node_modules_path, 'expo-modules-autolinking', 'scripts', 'autolinking.rb')
 community_cli_path = File.join(node_modules_path, '@react-native-community', 'cli')
 xcodebuild_available = system('command -v xcodebuild >/dev/null 2>&1')
-minimum_xcode_version = Gem::Version.new('16.1')
+recommended_xcode_version = Gem::Version.new('16.1')
 xcodebuild_version = nil
 
 if xcodebuild_available
@@ -35,7 +35,7 @@ if xcodebuild_available
   end
 end
 
-xcodebuild_supported = xcodebuild_available && xcodebuild_version && xcodebuild_version >= minimum_xcode_version
+xcodebuild_supported = xcodebuild_available && xcodebuild_version
 
 if File.exist?(react_native_pods)
   require_relative react_native_pods
@@ -58,6 +58,10 @@ if File.exist?(react_native_pods)
     end
 
     if xcodebuild_supported
+      if xcodebuild_version < recommended_xcode_version
+        Pod::UI.puts "xcodebuild version #{xcodebuild_version} is below the recommended #{recommended_xcode_version}; continuing with React Native pod configuration."
+      end
+
       use_react_native!(
         :path => config[:reactNativePath],
         :hermes_enabled => true,
@@ -65,11 +69,7 @@ if File.exist?(react_native_pods)
         :config_file_dir => File.expand_path('../Juno-Native', __dir__)
       )
     else
-      if xcodebuild_version.nil?
-        Pod::UI.puts 'xcodebuild is unavailable or version could not be detected; skipping React Native pod configuration to allow CI tooling to proceed.'
-      else
-        Pod::UI.puts "xcodebuild version #{xcodebuild_version} is below the required #{minimum_xcode_version}; skipping React Native pod configuration to allow CI tooling to proceed."
-      end
+      Pod::UI.puts 'xcodebuild is unavailable or version could not be detected; skipping React Native pod configuration to allow CI tooling to proceed.'
     end
 
     post_install do |installer|
@@ -79,7 +79,7 @@ if File.exist?(react_native_pods)
           :mac_catalyst_enabled => false
         )
       else
-        Pod::UI.puts 'Skipping React Native post_install because xcodebuild is unavailable or below the required version.'
+        Pod::UI.puts 'Skipping React Native post_install because xcodebuild is unavailable or version could not be detected.'
       end
       __apply_Xcode_12_5_M1_post_install_workaround(installer) if respond_to?(:__apply_Xcode_12_5_M1_post_install_workaround)
     end
