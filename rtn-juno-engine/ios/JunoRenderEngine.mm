@@ -166,8 +166,19 @@ void JunoRenderEngine::shutdown() {
     readyIndex_.store(-1, std::memory_order_release);
     submitIndex_ = 0;
     voiceCache_.clear();
-
+void JunoRenderEngine::shutdown() {
     init_ = false;
+    
+    // Wait for all in-flight command buffers to complete
+    if (inflight_) {
+        for (int i = 0; i < 3; ++i) {
+            dispatch_semaphore_wait(inflight_, DISPATCH_TIME_FOREVER);
+        }
+        for (int i = 0; i < 3; ++i) {
+            dispatch_semaphore_signal(inflight_);
+        }
+    }
+    
     device_ = nil;
     queue_ = nil;
     lib_ = nil;
