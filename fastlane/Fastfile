@@ -5,6 +5,11 @@ IOS_OUTPUT_DIR = ENV.fetch("IOS_ARTIFACT_DIR", File.join(ROOT_DIR, "fastlane/bui
 ANDROID_OUTPUT_DIR = ENV.fetch("ANDROID_ARTIFACT_DIR", File.join(ROOT_DIR, "fastlane/build/android"))
 ANDROID_BUNDLE_ROOT = ENV.fetch("ANDROID_BUNDLE_OUTPUT_DIR", File.join(ROOT_DIR, "android/app/build/outputs/bundle"))
 ANDROID_BUNDLE_PATH = ENV["ANDROID_RELEASE_BUNDLE_PATH"]
+CMAKE_BUILD_DIR = ENV.fetch("CMAKE_BUILD_DIR", File.join(ROOT_DIR, "fastlane/build/cmake"))
+CMAKE_CONFIGURATION = ENV.fetch("CMAKE_CONFIGURATION", "Release")
+IOS_BUILD_CONFIGURATION = ENV.fetch("IOS_BUILD_CONFIGURATION", "Release")
+IOS_BUILD_DESTINATION = ENV.fetch("IOS_BUILD_DESTINATION", "generic/platform=iOS Simulator")
+IOS_SDK = ENV.fetch("IOS_SDK", "iphonesimulator")
 
 def resolve_android_bundle(build_type)
   if ANDROID_BUNDLE_PATH
@@ -54,6 +59,26 @@ def resolve_android_bundle(build_type)
   bundles.max_by { |path| File.mtime(path) }
 end
 
+def compile_cpp_engine
+  FileUtils.mkdir_p(CMAKE_BUILD_DIR)
+
+  sh("cmake -S #{ROOT_DIR} -B #{CMAKE_BUILD_DIR} -DCMAKE_BUILD_TYPE=#{CMAKE_CONFIGURATION}")
+  sh("cmake --build #{CMAKE_BUILD_DIR} --config #{CMAKE_CONFIGURATION}")
+end
+
+def compile_swift_sources
+  sh <<~CMD
+    set -o pipefail && xcodebuild \
+      -workspace ios/JunoNative.xcworkspace \
+      -scheme JunoNative \
+      -configuration #{IOS_BUILD_CONFIGURATION} \
+      -sdk #{IOS_SDK} \
+      -destination '#{IOS_BUILD_DESTINATION}' \
+      CODE_SIGNING_ALLOWED=NO \
+      build
+  CMD
+end
+
 default_platform(:ios)
 
 platform :ios do
@@ -61,7 +86,9 @@ platform :ios do
   lane :release do
     FileUtils.mkdir_p(IOS_OUTPUT_DIR)
 
+    compile_cpp_engine
     sh("bash scripts/compile-turbo-modules.sh")
+    compile_swift_sources
 
     build_app(
       workspace: "ios/JunoNative.xcworkspace",
@@ -80,6 +107,7 @@ platform :android do
   lane :release do |options|
     FileUtils.mkdir_p(ANDROID_OUTPUT_DIR)
 
+    compile_cpp_engine
     sh("bash scripts/compile-turbo-modules.sh")
 
     build_type = options[:build_type] || ENV.fetch("ANDROID_BUILD_TYPE", "Release")
