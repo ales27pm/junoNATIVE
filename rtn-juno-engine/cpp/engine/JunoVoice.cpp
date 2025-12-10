@@ -14,6 +14,7 @@ void JunoVoice::noteOn(int midiNote, float vel) {
     envLevel_  = 0.0f;
     envTarget_ = 1.0f;
     phase_     = 0.0f;
+    subPhase_  = 0.0f;
     midiNote_  = midiNote;
 }
 
@@ -47,6 +48,7 @@ void JunoVoice::processBlock(float *L, float *R, int numFrames) {
     if (!active_ || !L || !R || numFrames <= 0) return;
 
     const float freqInc = frequency_ / std::max(sampleRate_, 1.0f);
+    const float subFreqInc = freqInc * 0.5f;
     const float envTime = (envTarget_ > envLevel_) ? attack_ : release_;
     const float envDenom = std::max(envTime * sampleRate_, 1.0f);
     const float envCoeff = std::exp(-1.0f / envDenom);
@@ -64,6 +66,9 @@ void JunoVoice::processBlock(float *L, float *R, int numFrames) {
         phase_ += freqInc;
         if (phase_ >= 1.0f) phase_ -= 1.0f;
 
+        subPhase_ += subFreqInc;
+        if (subPhase_ >= 1.0f) subPhase_ -= std::floor(subPhase_);
+
         float pwm = 0.5f + (pwmDepth_ - 0.5f); // keep in 0..1
         pwm = std::clamp(pwm, 0.05f, 0.95f);
 
@@ -71,8 +76,7 @@ void JunoVoice::processBlock(float *L, float *R, int numFrames) {
                                    :  1.0f - ((phase_ - pwm) / (1.0f - pwm)) * 2.0f;
 
         // Sub oscillator at half frequency (square-ish)
-        float subPhase = std::fmod(phase_ * 0.5f, 1.0f);
-        float sub = (subPhase < 0.5f ? 1.0f : -1.0f) * subLevel_;
+        float sub = (subPhase_ < 0.5f ? 1.0f : -1.0f) * subLevel_;
 
         float mixed = osc + sub;
 

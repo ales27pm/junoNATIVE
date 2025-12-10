@@ -21,6 +21,7 @@ public:
 private:
     float sampleRate_ = 44100.0f;
     float phase_      = 0.0f;
+    float subPhase_   = 0.0f;
     float envLevel_   = 0.0f;
     float envTarget_  = 0.0f;
     bool  active_     = false;
