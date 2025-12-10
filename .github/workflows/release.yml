@@ -38,10 +38,16 @@ jobs:
             echo "scripts/bumpVersion.js missing, skipping version bump"
           fi
 
-      - name: iOS Fastlane release
-        run: fastlane ios release
+      - name: Prepare App Store Connect API key
+        run: |
+          echo "${APPLE_API_KEY_JSON}" > ./asc_key.json
+          chmod 600 ./asc_key.json
         env:
-          APP_STORE_CONNECT_API_KEY_JSON: ${{ secrets.APPLE_API_KEY_JSON }}
+          APPLE_API_KEY_JSON: ${{ secrets.APPLE_API_KEY_JSON }}
+      - name: iOS Fastlane release
+        env:
+          APP_STORE_CONNECT_API_KEY_PATH: ./asc_key.json
+        run: fastlane ios release
   
   android_release:
     needs: ios_release
