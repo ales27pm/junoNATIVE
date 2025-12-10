@@ -65,7 +65,7 @@ export function ErrorFallback({ error, resetError }: ErrorFallbackProps) {
         </ThemedText>
 
         <ThemedText type="body" style={styles.message}>
-          Something unexpected happened. Let's get back to making music.
+          Something unexpected happened. Let&apos;s get back to making music.
         </ThemedText>
 
         <Pressable
@@ -246,6 +246,5 @@ const styles = StyleSheet.create({
     width: "100%",
   },
 });
-
 
 // ============================================================

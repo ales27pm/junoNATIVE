@@ -11,11 +11,9 @@ import {
   Alert,
   Platform,
 } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 import { Feather } from "@expo/vector-icons";
 import { ThemedText } from "@/components/ThemedText";
-import { ThemedView } from "@/components/ThemedView";
 import PatchCard from "@/components/PatchCard";
 import { useSynth } from "@/contexts/SynthContext";
 import { Colors, Spacing, Typography, BorderRadius } from "@/constants/theme";
@@ -26,48 +24,63 @@ const CATEGORIES = ["all", "bass", "lead", "pad", "fx"] as const;
 
 export default function PatchesScreen() {
   const theme = Colors.dark;
-  const insets = useSafeAreaInsets();
   const tabBarHeight = useBottomTabBarHeight();
-  const { patches, currentPatchId, loadPatch, savePatch, deletePatch } = useSynth();
+  const { patches, currentPatchId, loadPatch, savePatch, deletePatch } =
+    useSynth();
 
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedCategory, setSelectedCategory] = useState<typeof CATEGORIES[number]>("all");
+  const [selectedCategory, setSelectedCategory] =
+    useState<(typeof CATEGORIES)[number]>("all");
   const [showSaveModal, setShowSaveModal] = useState(false);
   const [newPatchName, setNewPatchName] = useState("");
-  const [newPatchCategory, setNewPatchCategory] = useState<Patch["category"]>("lead");
+  const [newPatchCategory, setNewPatchCategory] =
+    useState<Patch["category"]>("lead");
 
   const filteredPatches = useMemo(() => {
     return patches.filter((patch) => {
-      const matchesSearch = patch.name.toLowerCase().includes(searchQuery.toLowerCase());
-      const matchesCategory = selectedCategory === "all" || patch.category === selectedCategory;
+      const matchesSearch = patch.name
+        .toLowerCase()
+        .includes(searchQuery.toLowerCase());
+      const matchesCategory =
+        selectedCategory === "all" || patch.category === selectedCategory;
       return matchesSearch && matchesCategory;
     });
   }, [patches, searchQuery, selectedCategory]);
 
-  const handlePatchPress = useCallback((patch: Patch) => {
-    loadPatch(patch);
-  }, [loadPatch]);
+  const handlePatchPress = useCallback(
+    (patch: Patch) => {
+      loadPatch(patch);
+    },
+    [loadPatch],
+  );
 
-  const handlePatchLongPress = useCallback((patch: Patch) => {
-    if (patch.id.startsWith("factory_")) {
-      return;
-    }
-    
-    if (Platform.OS === "web") {
-      if (confirm(`Delete "${patch.name}"?`)) {
-        deletePatch(patch.id);
+  const handlePatchLongPress = useCallback(
+    (patch: Patch) => {
+      if (patch.id.startsWith("factory_")) {
+        return;
       }
-    } else {
-      Alert.alert(
-        "Delete Patch",
-        `Are you sure you want to delete "${patch.name}"?`,
-        [
-          { text: "Cancel", style: "cancel" },
-          { text: "Delete", style: "destructive", onPress: () => deletePatch(patch.id) },
-        ]
-      );
-    }
-  }, [deletePatch]);
+
+      if (Platform.OS === "web") {
+        if (confirm(`Delete "${patch.name}"?`)) {
+          deletePatch(patch.id);
+        }
+      } else {
+        Alert.alert(
+          "Delete Patch",
+          `Are you sure you want to delete "${patch.name}"?`,
+          [
+            { text: "Cancel", style: "cancel" },
+            {
+              text: "Delete",
+              style: "destructive",
+              onPress: () => deletePatch(patch.id),
+            },
+          ],
+        );
+      }
+    },
+    [deletePatch],
+  );
 
   const handleSavePatch = useCallback(async () => {
     if (!newPatchName.trim()) return;
@@ -87,13 +100,18 @@ export default function PatchesScreen() {
         />
       </View>
     ),
-    [currentPatchId, handlePatchPress, handlePatchLongPress]
+    [currentPatchId, handlePatchPress, handlePatchLongPress],
   );
 
   return (
     <View style={[styles.container, { backgroundColor: theme.backgroundRoot }]}>
       <View style={[styles.searchContainer, { paddingTop: Spacing.lg }]}>
-        <View style={[styles.searchBar, { backgroundColor: theme.backgroundSecondary }]}>
+        <View
+          style={[
+            styles.searchBar,
+            { backgroundColor: theme.backgroundSecondary },
+          ]}
+        >
           <Feather name="search" size={18} color={theme.textSecondary} />
           <TextInput
             style={[styles.searchInput, { color: theme.text }]}
@@ -114,7 +132,9 @@ export default function PatchesScreen() {
               styles.categoryChip,
               {
                 backgroundColor:
-                  selectedCategory === category ? theme.accent : theme.backgroundSecondary,
+                  selectedCategory === category
+                    ? theme.accent
+                    : theme.backgroundSecondary,
               },
             ]}
           >
@@ -122,7 +142,10 @@ export default function PatchesScreen() {
               style={[
                 styles.categoryText,
                 {
-                  color: selectedCategory === category ? "#FFFFFF" : theme.textSecondary,
+                  color:
+                    selectedCategory === category
+                      ? "#FFFFFF"
+                      : theme.textSecondary,
                 },
               ]}
             >
@@ -146,7 +169,9 @@ export default function PatchesScreen() {
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
             <Feather name="inbox" size={48} color={theme.textSecondary} />
-            <ThemedText style={[styles.emptyText, { color: theme.textSecondary }]}>
+            <ThemedText
+              style={[styles.emptyText, { color: theme.textSecondary }]}
+            >
               No patches found
             </ThemedText>
           </View>
@@ -174,7 +199,12 @@ export default function PatchesScreen() {
             style={styles.modalScrollView}
             contentContainerStyle={styles.modalScrollContent}
           >
-            <View style={[styles.modalContent, { backgroundColor: theme.backgroundDefault }]}>
+            <View
+              style={[
+                styles.modalContent,
+                { backgroundColor: theme.backgroundDefault },
+              ]}
+            >
               <ThemedText style={[styles.modalTitle, { color: theme.text }]}>
                 Save Patch
               </ThemedText>
@@ -195,7 +225,9 @@ export default function PatchesScreen() {
                 autoFocus
               />
 
-              <ThemedText style={[styles.modalLabel, { color: theme.textSecondary }]}>
+              <ThemedText
+                style={[styles.modalLabel, { color: theme.textSecondary }]}
+              >
                 Category
               </ThemedText>
               <View style={styles.categorySelector}>
@@ -207,13 +239,18 @@ export default function PatchesScreen() {
                       styles.categorySelectorChip,
                       {
                         backgroundColor:
-                          newPatchCategory === cat ? theme.accent : theme.backgroundSecondary,
+                          newPatchCategory === cat
+                            ? theme.accent
+                            : theme.backgroundSecondary,
                       },
                     ]}
                   >
                     <ThemedText
                       style={{
-                        color: newPatchCategory === cat ? "#FFFFFF" : theme.textSecondary,
+                        color:
+                          newPatchCategory === cat
+                            ? "#FFFFFF"
+                            : theme.textSecondary,
                         ...Typography.knobLabel,
                       }}
                     >
@@ -226,7 +263,10 @@ export default function PatchesScreen() {
               <View style={styles.modalButtons}>
                 <Pressable
                   onPress={() => setShowSaveModal(false)}
-                  style={[styles.modalButton, { backgroundColor: theme.backgroundSecondary }]}
+                  style={[
+                    styles.modalButton,
+                    { backgroundColor: theme.backgroundSecondary },
+                  ]}
                 >
                   <ThemedText style={{ color: theme.text }}>Cancel</ThemedText>
                 </Pressable>
@@ -234,7 +274,10 @@ export default function PatchesScreen() {
                   onPress={handleSavePatch}
                   style={[
                     styles.modalButton,
-                    { backgroundColor: theme.accent, opacity: newPatchName.trim() ? 1 : 0.5 },
+                    {
+                      backgroundColor: theme.accent,
+                      opacity: newPatchName.trim() ? 1 : 0.5,
+                    },
                   ]}
                 >
                   <ThemedText style={{ color: "#FFFFFF" }}>Save</ThemedText>
@@ -372,6 +415,5 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
 });
-
 
 // ============================================================

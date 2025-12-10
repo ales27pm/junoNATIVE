@@ -1,16 +1,14 @@
 // ============================================================
 
 import React from "react";
-import { View, Pressable, StyleSheet } from "react-native";
+import { View, Pressable, StyleSheet, Platform } from "react-native";
 import Animated, {
   useAnimatedStyle,
   withSpring,
-  interpolateColor,
 } from "react-native-reanimated";
 import * as Haptics from "expo-haptics";
 import { ThemedText } from "@/components/ThemedText";
 import { Colors, Spacing, Typography } from "@/constants/theme";
-import { Platform } from "react-native";
 
 interface SynthSwitchProps {
   label: string;
@@ -18,7 +16,11 @@ interface SynthSwitchProps {
   onChange: (value: boolean) => void;
 }
 
-export default function SynthSwitch({ label, value, onChange }: SynthSwitchProps) {
+export default function SynthSwitch({
+  label,
+  value,
+  onChange,
+}: SynthSwitchProps) {
   const theme = Colors.dark;
 
   const handlePress = () => {
@@ -29,7 +31,9 @@ export default function SynthSwitch({ label, value, onChange }: SynthSwitchProps
   };
 
   const animatedTrackStyle = useAnimatedStyle(() => ({
-    backgroundColor: withSpring(value ? theme.accent : theme.backgroundSecondary),
+    backgroundColor: withSpring(
+      value ? theme.accent : theme.backgroundSecondary,
+    ),
   }));
 
   const animatedKnobStyle = useAnimatedStyle(() => ({
@@ -73,6 +77,5 @@ const styles = StyleSheet.create({
     marginTop: Spacing.xs,
   },
 });
-
 
 // ============================================================

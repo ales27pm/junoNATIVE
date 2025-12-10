@@ -12,9 +12,8 @@
     "types": ["node"]
   },
   "include": ["**/*.ts", "**/*.tsx"],
-  "exclude": ["node_modules", "build", "dist", "**/*.test.ts"],
+  "exclude": ["node_modules", "build", "dist", "**/*.test.ts"]
 }
-
 
 // ============================================================
 // SECTION: Patched DSP / iOS / RN glue from junoNATIVE_patched.txt

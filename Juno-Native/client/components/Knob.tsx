@@ -60,7 +60,7 @@ export default function Knob({
         }
       }
     },
-    [min, max, onChange, triggerHaptic]
+    [min, max, onChange, triggerHaptic],
   );
 
   const panGesture = Gesture.Pan()
@@ -94,9 +94,7 @@ export default function Knob({
     transform: [{ scale: scale.value }],
   }));
 
-  const displayValue = formatValue
-    ? formatValue(value)
-    : value.toString();
+  const displayValue = formatValue ? formatValue(value) : value.toString();
 
   const arcLength = normalizedValue * 270;
 
@@ -136,9 +134,7 @@ export default function Knob({
                       height: size - 4,
                       borderRadius: (size - 4) / 2,
                       borderColor: theme.accent,
-                      transform: [
-                        { rotate: "-135deg" },
-                      ],
+                      transform: [{ rotate: "-135deg" }],
                     },
                   ]}
                 />
@@ -165,7 +161,9 @@ export default function Knob({
             </View>
           </View>
           {isActive && (
-            <View style={[styles.valuePopup, { backgroundColor: theme.accent }]}>
+            <View
+              style={[styles.valuePopup, { backgroundColor: theme.accent }]}
+            >
               <ThemedText style={styles.valueText}>{displayValue}</ThemedText>
             </View>
           )}
@@ -238,6 +236,5 @@ const styles = StyleSheet.create({
     marginTop: Spacing.xs,
   },
 });
-
 
 // ============================================================

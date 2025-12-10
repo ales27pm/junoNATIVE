@@ -1,6 +1,6 @@
 // ============================================================
 
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { Platform } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { webAudioSynth } from "@/lib/WebAudioSynth";
@@ -108,9 +108,12 @@ export function useSynthEngine() {
       } else {
         const factory = getFactoryPatches();
         setPatches(factory);
-        await AsyncStorage.setItem(PATCHES_STORAGE_KEY, JSON.stringify(factory));
+        await AsyncStorage.setItem(
+          PATCHES_STORAGE_KEY,
+          JSON.stringify(factory),
+        );
       }
-      
+
       const currentId = await AsyncStorage.getItem(CURRENT_PATCH_KEY);
       if (currentId) {
         setCurrentPatchId(currentId);
@@ -124,7 +127,10 @@ export function useSynthEngine() {
 
   const savePatches = async (newPatches: Patch[]) => {
     try {
-      await AsyncStorage.setItem(PATCHES_STORAGE_KEY, JSON.stringify(newPatches));
+      await AsyncStorage.setItem(
+        PATCHES_STORAGE_KEY,
+        JSON.stringify(newPatches),
+      );
       setPatches(newPatches);
     } catch (error) {
       console.error("Failed to save patches:", error);
@@ -132,15 +138,18 @@ export function useSynthEngine() {
   };
 
   const setParam = useCallback((key: keyof SynthParams, value: number) => {
-    setParams((prev) => ({ ...prev, [key]: Math.max(0, Math.min(127, value)) }));
+    setParams((prev) => ({
+      ...prev,
+      [key]: Math.max(0, Math.min(127, value)),
+    }));
   }, []);
 
-  const setSwitch = useCallback(<K extends keyof SynthSwitches>(
-    key: K,
-    value: SynthSwitches[K]
-  ) => {
-    setSwitches((prev) => ({ ...prev, [key]: value }));
-  }, []);
+  const setSwitch = useCallback(
+    <K extends keyof SynthSwitches>(key: K, value: SynthSwitches[K]) => {
+      setSwitches((prev) => ({ ...prev, [key]: value }));
+    },
+    [],
+  );
 
   const noteOn = useCallback((note: number, velocity: number = 100) => {
     setActiveNotes((prev) => new Set(prev).add(note));
@@ -167,30 +176,36 @@ export function useSynthEngine() {
     await AsyncStorage.setItem(CURRENT_PATCH_KEY, patch.id);
   }, []);
 
-  const savePatch = useCallback(async (name: string, category: Patch["category"]) => {
-    const newPatch: Patch = {
-      id: Date.now().toString(),
-      name,
-      category,
-      params: { ...params },
-      switches: { ...switches },
-      createdAt: Date.now(),
-    };
-    const newPatches = [...patches, newPatch];
-    await savePatches(newPatches);
-    setCurrentPatchId(newPatch.id);
-    await AsyncStorage.setItem(CURRENT_PATCH_KEY, newPatch.id);
-    return newPatch;
-  }, [params, switches, patches]);
+  const savePatch = useCallback(
+    async (name: string, category: Patch["category"]) => {
+      const newPatch: Patch = {
+        id: Date.now().toString(),
+        name,
+        category,
+        params: { ...params },
+        switches: { ...switches },
+        createdAt: Date.now(),
+      };
+      const newPatches = [...patches, newPatch];
+      await savePatches(newPatches);
+      setCurrentPatchId(newPatch.id);
+      await AsyncStorage.setItem(CURRENT_PATCH_KEY, newPatch.id);
+      return newPatch;
+    },
+    [params, switches, patches],
+  );
 
-  const deletePatch = useCallback(async (patchId: string) => {
-    const newPatches = patches.filter((p) => p.id !== patchId);
-    await savePatches(newPatches);
-    if (currentPatchId === patchId) {
-      setCurrentPatchId(null);
-      await AsyncStorage.removeItem(CURRENT_PATCH_KEY);
-    }
-  }, [patches, currentPatchId]);
+  const deletePatch = useCallback(
+    async (patchId: string) => {
+      const newPatches = patches.filter((p) => p.id !== patchId);
+      await savePatches(newPatches);
+      if (currentPatchId === patchId) {
+        setCurrentPatchId(null);
+        await AsyncStorage.removeItem(CURRENT_PATCH_KEY);
+      }
+    },
+    [patches, currentPatchId],
+  );
 
   const getCurrentPatch = useCallback(() => {
     return patches.find((p) => p.id === currentPatchId) || null;
@@ -246,7 +261,12 @@ function getFactoryPatches(): Patch[] {
         envSustain: 60,
         envRelease: 20,
       },
-      switches: { ...defaultSwitches, dcoFoot16: true, sawWaveOn: true, pulseWaveOn: false },
+      switches: {
+        ...defaultSwitches,
+        dcoFoot16: true,
+        sawWaveOn: true,
+        pulseWaveOn: false,
+      },
       createdAt: 0,
     },
     {
@@ -263,7 +283,12 @@ function getFactoryPatches(): Patch[] {
         envRelease: 25,
         vcfEnvMod: 70,
       },
-      switches: { ...defaultSwitches, sawWaveOn: true, pulseWaveOn: false, chorusMode: 1 },
+      switches: {
+        ...defaultSwitches,
+        sawWaveOn: true,
+        pulseWaveOn: false,
+        chorusMode: 1,
+      },
       createdAt: 0,
     },
     {
@@ -300,7 +325,13 @@ function getFactoryPatches(): Patch[] {
         envSustain: 85,
         envRelease: 60,
       },
-      switches: { ...defaultSwitches, pulseWaveOn: true, sawWaveOn: false, pwmSourceLFO: true, chorusMode: 2 },
+      switches: {
+        ...defaultSwitches,
+        pulseWaveOn: true,
+        sawWaveOn: false,
+        pwmSourceLFO: true,
+        chorusMode: 2,
+      },
       createdAt: 0,
     },
     {
@@ -324,6 +355,5 @@ function getFactoryPatches(): Patch[] {
 }
 
 export { defaultParams, defaultSwitches };
-
 
 // ============================================================

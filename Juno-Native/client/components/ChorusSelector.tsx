@@ -11,7 +11,10 @@ interface ChorusSelectorProps {
   onChange: (value: 0 | 1 | 2) => void;
 }
 
-export default function ChorusSelector({ value, onChange }: ChorusSelectorProps) {
+export default function ChorusSelector({
+  value,
+  onChange,
+}: ChorusSelectorProps) {
   const theme = Colors.dark;
 
   const handlePress = (newValue: 0 | 1 | 2) => {
@@ -23,7 +26,12 @@ export default function ChorusSelector({ value, onChange }: ChorusSelectorProps)
 
   return (
     <View style={styles.container}>
-      <View style={[styles.selectorRow, { backgroundColor: theme.backgroundSecondary }]}>
+      <View
+        style={[
+          styles.selectorRow,
+          { backgroundColor: theme.backgroundSecondary },
+        ]}
+      >
         {[0, 1, 2].map((mode) => (
           <Pressable
             key={mode}
@@ -75,6 +83,5 @@ const styles = StyleSheet.create({
     marginTop: Spacing.xs,
   },
 });
-
 
 // ============================================================
