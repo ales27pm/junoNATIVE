@@ -23,11 +23,20 @@ jobs:
 
       - name: Install JS dependencies
         working-directory: Juno-Native
-        run: npm ci
+      - name: Setup Java
+        id: setupjava
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
 
       - name: Build Android Debug
         working-directory: rtn-juno-engine/android
+        env:
+          JAVA_HOME: ${{ steps.setupjava.outputs.path }}
+          ANDROID_SDK_ROOT: ${{ env.ANDROID_SDK_ROOT }}
         run: |
+          export PATH="$JAVA_HOME/bin:$PATH"
           chmod +x ./gradlew
           ./gradlew clean assembleDebug --no-daemon --stacktrace
 
