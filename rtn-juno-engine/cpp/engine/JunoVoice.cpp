@@ -43,45 +43,48 @@ void JunoVoice::setParam(const std::string &id, float v) {
     }
 }
 
-void JunoVoice::process(float &L, float &R) {
-    if (!active_) return;
+void JunoVoice::processBlock(float *L, float *R, int numFrames) {
+    if (!active_ || !L || !R || numFrames <= 0) return;
 
-    // Envelope follower (simple one-pole towards envTarget)
-    float envTime = (envTarget_ > envLevel_) ? attack_ : release_;
-    float denom   = std::max(envTime * sampleRate_, 1.0f);
-    float step    = 1.0f / denom;
-    envLevel_ += (envTarget_ - envLevel_) * step;
+    const float freqInc = frequency_ / std::max(sampleRate_, 1.0f);
+    const float envTime = (envTarget_ > envLevel_) ? attack_ : release_;
+    const float envDenom = std::max(envTime * sampleRate_, 1.0f);
+    const float envCoeff = std::exp(-1.0f / envDenom);
 
-    if (envLevel_ < 1e-4f && envTarget_ == 0.0f) {
-        active_ = false;
-        midiNote_ = -1;
-        return;
+    for (int i = 0; i < numFrames; ++i) {
+        envLevel_ = envTarget_ + (envLevel_ - envTarget_) * envCoeff;
+
+        if (envLevel_ < 1e-4f && envTarget_ == 0.0f) {
+            active_ = false;
+            midiNote_ = -1;
+            break;
+        }
+
+        // Simple sawtooth oscillator with PWM-like modulation
+        phase_ += freqInc;
+        if (phase_ >= 1.0f) phase_ -= 1.0f;
+
+        float pwm = 0.5f + (pwmDepth_ - 0.5f); // keep in 0..1
+        pwm = std::clamp(pwm, 0.05f, 0.95f);
+
+        float osc = (phase_ < pwm) ? -1.0f + (phase_ / pwm) * 2.0f
+                                   :  1.0f - ((phase_ - pwm) / (1.0f - pwm)) * 2.0f;
+
+        // Sub oscillator at half frequency (square-ish)
+        float subPhase = std::fmod(phase_ * 0.5f, 1.0f);
+        float sub = (subPhase < 0.5f ? 1.0f : -1.0f) * subLevel_;
+
+        float mixed = osc + sub;
+
+        // Filter
+        float filtered = filter_.process(mixed, cutoff_, resonance_);
+
+        // Chorus to stereo
+        float outL = 0.0f;
+        float outR = 0.0f;
+        chorus_.process(filtered, outL, outR);
+
+        L[i] += outL * envLevel_ * velocity_;
+        R[i] += outR * envLevel_ * velocity_;
     }
-
-    // Simple sawtooth oscillator with PWM-like modulation
-    phase_ += frequency_ / std::max(sampleRate_, 1.0f);
-    if (phase_ >= 1.0f) phase_ -= 1.0f;
-
-    float pwm = 0.5f + (pwmDepth_ - 0.5f); // keep in 0..1
-    pwm = std::clamp(pwm, 0.05f, 0.95f);
-
-    float osc = (phase_ < pwm) ? -1.0f + (phase_ / pwm) * 2.0f
-                               :  1.0f - ((phase_ - pwm) / (1.0f - pwm)) * 2.0f;
-
-    // Sub oscillator at half frequency (square-ish)
-    float subPhase = std::fmod(phase_ * 0.5f, 1.0f);
-    float sub = (subPhase < 0.5f ? 1.0f : -1.0f) * subLevel_;
-
-    float mixed = osc + sub;
-
-    // Filter
-    float filtered = filter_.process(mixed, cutoff_, resonance_);
-
-    // Chorus to stereo
-    float outL = 0.0f;
-    float outR = 0.0f;
-    chorus_.process(filtered, outL, outR);
-
-    L += outL * envLevel_ * velocity_;
-    R += outR * envLevel_ * velocity_;
 }

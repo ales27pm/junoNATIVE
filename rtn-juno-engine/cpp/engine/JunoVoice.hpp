@@ -10,7 +10,7 @@ public:
     void noteOn(int midiNote, float velocity);
     void noteOff(int midiNote);
     void setParam(const std::string &id, float value);
-    void process(float &left, float &right);
+    void processBlock(float *left, float *right, int numFrames);
     bool isActive() const;
     int midiNote() const { return midiNote_; }
 

@@ -14,6 +14,7 @@ bool JunoDSPEngine::initialize(int sr, int bs, int poly, bool gpu) {
         voices_.push_back(std::move(v));
     }
 
+    params_.clear();
     running_ = true;
     return true;
 }
@@ -42,9 +43,6 @@ void JunoDSPEngine::noteOff(int note) {
 
 void JunoDSPEngine::setParameter(const std::string &id, float v) {
     params_.set(id, v);
-    for (auto &voice : voices_) {
-        voice->setParam(id, v);
-    }
 }
 
 void JunoDSPEngine::loadPatch(const Juno106::JunoPatch &p) {
@@ -76,13 +74,14 @@ void JunoDSPEngine::renderAudio(float *L, float *R, int n) {
     std::fill(L, L + n, 0.0f);
     std::fill(R, R + n, 0.0f);
 
-    for (auto &voice : voices_) {
-        for (int i = 0; i < n; ++i) {
-            float l = 0.0f;
-            float r = 0.0f;
-            voice->process(l, r);
-            L[i] += l;
-            R[i] += r;
+    RCUParameterManager::ParamChange change;
+    while (params_.tryPop(change)) {
+        for (auto &voice : voices_) {
+            voice->setParam(change.id, change.value);
         }
+    }
+
+    for (auto &voice : voices_) {
+        voice->processBlock(L, R, n);
     }
 }
