@@ -60,7 +60,11 @@ void JunoDSPEngine::noteOn(int note, float vel) {
 
 void JunoDSPEngine::noteOff(int note) {
     for (auto &v : voices_) {
+        if (!v->isActive()) continue;
         v->noteOff(note);
+        if (!v->isActive()) {
+            break; // Release a single matching voice
+        }
     }
 }
 
