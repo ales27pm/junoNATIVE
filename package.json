@@ -8,6 +8,7 @@
     "npm": ">=11.4.2"
   },
   "scripts": {
+    "test": "npm --prefix Juno-Native test",
     "ios": "react-native run-ios",
     "start": "react-native start"
   },
