@@ -1,0 +1,51 @@
+name: Release QA Build
+
+on:
+  workflow_run:
+    workflows: ["Android Build", "iOS Build", "DSP Benchmark Matrix"]
+    types: [completed]
+
+jobs:
+  release:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.2"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install JS deps and Fastlane
+        run: |
+          npm ci
+          gem install fastlane
+
+      # Optional version bump script; ensure scripts/bumpVersion.js exists if you keep this.
+      - name: Bump version (optional)
+        run: |
+          if [ -f scripts/bumpVersion.js ]; then
+            node scripts/bumpVersion.js
+          else
+            echo "scripts/bumpVersion.js missing, skipping version bump"
+          fi
+
+      - name: iOS Fastlane release
+        run: bundle exec fastlane ios release
+        env:
+          APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APPLE_KEY_ID }}
+          APP_STORE_CONNECT_API_KEY_ISSUER_ID: ${{ secrets.APPLE_ISSUER_ID }}
+          APP_STORE_CONNECT_API_KEY: ${{ secrets.APPLE_KEY }}
+
+      - name: Android Fastlane release
+        run: bundle exec fastlane android release
+        env:
+          SUPPLY_JSON_KEY_DATA: ${{ secrets.GOOGLE_PLAY_JSON }}

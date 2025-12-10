@@ -1,0 +1,32 @@
+name: DSP Benchmark Matrix
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 3 * * 1"  # Every Monday at 03:00 UTC
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        sr: [44100, 48000, 96000]
+        bs: [64, 128, 256]
+        poly: [4, 8, 16]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure CMake with matrix params
+        run: |
+          cmake -S . -B build \
+            -DTEST_SAMPLE_RATE=${{ matrix.sr }} \
+            -DTEST_BUFFER_SIZE=${{ matrix.bs }} \
+            -DTEST_POLYPHONY=${{ matrix.poly }}
+
+      - name: Build tests
+        run: cmake --build build --config Release
+
+      - name: Run DSP tests
+        run: ctest --test-dir build --output-on-failure
