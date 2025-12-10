@@ -22,8 +22,7 @@ jobs:
           java-version: "17"
 
       - name: Install JS dependencies
-        working-directory: rtn-juno-engine
-        run: npm ci
+        run: npm ci --prefix Juno-Native
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
