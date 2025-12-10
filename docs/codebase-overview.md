@@ -25,5 +25,5 @@ This document summarizes the major areas of the project so new contributors can 
 
 ## Supporting utilities
 - React Query client helpers, theming primitives, and HTTP wrappers that compose API base URLs and normalize fetch errors.
-
+- **HTTP server:** `registerRoutes` currently returns an HTTP server with an initialized `/api` surface (e.g., with logging middleware) but no functional routes, ready for future expansion. Error handling middleware serializes error responses and rethrows for visibility.
 > For implementation specifics or edge-case behaviors, prefer reading the source (components, hooks, and utilities) where TSDoc/JSDoc and tests are maintained alongside the code.
