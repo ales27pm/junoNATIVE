@@ -59,10 +59,17 @@ if File.exist?(react_native_pods)
       raise Pod::Informative, 'Missing React Native CLI; install it to enable native module autolinking.'
     end
 
+    cli_entrypoint = File.join(community_cli_path, 'build', 'index.js')
+
+    unless File.exist?(cli_entrypoint)
+      Pod::UI.puts "React Native CLI entrypoint not found at #{cli_entrypoint}; reinstall dev dependency @react-native-community/cli before running pod install."
+      raise Pod::Informative, 'Missing React Native CLI entrypoint; autolinking cannot proceed.'
+    end
+
     config = use_native_modules!([
       'node',
       '-e',
-      "process.chdir('#{File.expand_path('../Juno-Native', __dir__)}');process.argv=['','', 'config', '--project-root', '#{File.expand_path('..', __dir__)}'];require('@react-native-community/cli').run()"
+      "process.chdir('#{File.expand_path('../Juno-Native', __dir__)}');process.argv=['','', 'config', '--project-root', '#{File.expand_path('..', __dir__)}'];require('#{cli_entrypoint}').run()"
     ])
 
     config[:reactNativePath] = File.expand_path(react_native_path)
