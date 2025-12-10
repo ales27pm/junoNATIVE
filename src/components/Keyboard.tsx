@@ -17,7 +17,7 @@ export type KeyboardProps = {
 export const Keyboard: React.FC<KeyboardProps> = ({
   onNoteOn,
   onNoteOff,
-  activeNotes = new Set<number>(),
+  activeNotes,
   startOctave = 3,
   numOctaves = 2,
   disabled = false,

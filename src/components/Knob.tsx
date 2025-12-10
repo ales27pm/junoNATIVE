@@ -14,18 +14,20 @@ export const Knob: React.FC<KnobProps> = ({
   externalValue,
   onChange,
 }) => {
-  const [val, setVal] = useState<number>(value);
-  const valueRef = useRef(val);
+  const [val, setVal] = useState<number>(externalValue ?? value ?? 0);
+  const startValRef = useRef(val);
 
   useEffect(() => {
-    valueRef.current = val;
-  }, [val]);
-
-  useEffect(() => {
-    if (externalValue !== undefined && externalValue !== valueRef.current) {
+    if (externalValue !== undefined && externalValue !== val) {
       setVal(externalValue);
     }
-  }, [externalValue]);
+  }, [externalValue, val]);
+
+  useEffect(() => {
+    if (externalValue === undefined && value !== undefined && value !== val) {
+      setVal(value);
+    }
+  }, [value, externalValue, val]);
 
   const clamp = (v: number) => Math.min(1, Math.max(0, v));
 
@@ -33,16 +35,16 @@ export const Knob: React.FC<KnobProps> = ({
     () =>
       PanResponder.create({
         onStartShouldSetPanResponder: () => true,
+        onPanResponderGrant: () => {
+          startValRef.current = val;
+        },
         onPanResponderMove: (_, gestureState) => {
-          setVal((prev) => {
-            const next = clamp(prev - gestureState.dy / 150);
-            valueRef.current = next;
-            onChange?.(next);
-            return next;
-          });
+          const next = clamp(startValRef.current - gestureState.dy / 150);
+          setVal(next);
+          onChange?.(next);
         },
       }),
-    [onChange],
+    [onChange, val],
   );
 
   return (
