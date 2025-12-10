@@ -35,7 +35,12 @@ jobs:
         run: |
           set -euo pipefail
           export PATH="$JAVA_HOME/bin:$PATH"
-          yes | sdkmanager --licenses
+          # sdkmanager closes stdin early after accepting all licenses, which can
+          # raise SIGPIPE for the `yes` process when pipefail is enabled. Temporarily
+          # disable pipefail so the pipeline reports sdkmanager's exit status.
+          set +o pipefail
+          yes | sdkmanager --licenses >/dev/null
+          set -o pipefail
           sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
           chmod +x ./gradlew
           ./gradlew clean assembleDebug --no-daemon --stacktrace
