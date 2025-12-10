@@ -1,5 +1,7 @@
 #include "JunoDSPEngine.hpp"
+#if defined(__APPLE__)
 #include "../ios/JunoRenderEngine.hpp"
+#endif
 #include "../parser/Juno106PatchParser.hpp"
 #include <algorithm>
 #include <cmath>
@@ -10,7 +12,11 @@ bool JunoDSPEngine::initialize(int sr, int bs, int poly, bool gpuFlag) {
     }
     sampleRate_ = sr;
     bufferSize_ = bs;
+#if defined(__APPLE__)
     useGPU_     = gpuFlag;
+#else
+    useGPU_ = false;
+#endif
 
     voices_.clear();
     voices_.reserve(poly);
@@ -21,6 +27,7 @@ bool JunoDSPEngine::initialize(int sr, int bs, int poly, bool gpuFlag) {
     }
 
     if (useGPU_) {
+#if defined(__APPLE__)
         gpu_ = std::make_unique<JunoRenderEngine>();
         if (!gpu_->initialize(static_cast<float>(sampleRate_), poly, bufferSize_)) {
             gpu_.reset();
@@ -29,9 +36,9 @@ bool JunoDSPEngine::initialize(int sr, int bs, int poly, bool gpuFlag) {
         } else {
             gpuVoiceCache_ = std::make_unique<std::vector<VoiceGPUParams>>(voices_.size());
         }
-    } else {
-        gpu_.reset();
-        gpuVoiceCache_.reset();
+#else
+        useGPU_ = false;
+#endif
     }
 
     running_.store(true, std::memory_order_release);
@@ -104,7 +111,12 @@ void JunoDSPEngine::renderAudio(float *L, float *R, int n) {
         }
     }
 
-    if (useGPU_ && gpu_) {
+    if (useGPU_
+#if defined(__APPLE__)
+        && gpu_
+#endif
+    ) {
+#if defined(__APPLE__)
         // Collect voice state for GPU without heap allocations on the audio thread.
         if (gpuVoiceCache_ && gpuVoiceCache_->size() >= voices_.size()) {
             for (std::size_t i = 0; i < voices_.size(); ++i) {
@@ -126,6 +138,7 @@ void JunoDSPEngine::renderAudio(float *L, float *R, int n) {
             voice->advanceState(n);
         }
         return;
+#endif
     }
 
     // CPU path
