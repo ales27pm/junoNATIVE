@@ -16,6 +16,11 @@ export const Knob: React.FC<KnobProps> = ({
 }) => {
   const [val, setVal] = useState<number>(externalValue ?? value ?? 0);
   const startValRef = useRef(val);
+  const currentValRef = useRef(val);
+
+  useEffect(() => {
+    currentValRef.current = val;
+  }, [val]);
 
   useEffect(() => {
     if (externalValue !== undefined && externalValue !== val) {
@@ -36,7 +41,7 @@ export const Knob: React.FC<KnobProps> = ({
       PanResponder.create({
         onStartShouldSetPanResponder: () => true,
         onPanResponderGrant: () => {
-          startValRef.current = val;
+          startValRef.current = currentValRef.current;
         },
         onPanResponderMove: (_, gestureState) => {
           const next = clamp(startValRef.current - gestureState.dy / 150);
@@ -44,7 +49,7 @@ export const Knob: React.FC<KnobProps> = ({
           onChange?.(next);
         },
       }),
-    [onChange, val],
+    [onChange],
   );
 
   return (
