@@ -9,11 +9,23 @@ ANDROID_BUNDLE_PATH = ENV["ANDROID_RELEASE_BUNDLE_PATH"]
 def resolve_android_bundle(build_type)
   return File.expand_path(ANDROID_BUNDLE_PATH, ROOT_DIR) if ANDROID_BUNDLE_PATH
 
-  bundle_dir = File.join(ANDROID_BUNDLE_ROOT, build_type.downcase)
-  bundles = Dir.glob(File.join(bundle_dir, "*.aab"))
-  UI.user_error!("No Android App Bundle found in #{bundle_dir}") if bundles.empty?
+  normalized_build_type = build_type.to_s
+  normalized_build_type[0] = normalized_build_type[0].downcase if normalized_build_type.length.positive?
 
-  bundles.max_by { |path| File.mtime(path) }
+  candidate_directories = [
+    normalized_build_type,
+    build_type.to_s,
+    build_type.to_s.downcase
+  ].uniq
+
+  bundle_dir = candidate_directories.map { |dir| File.join(ANDROID_BUNDLE_ROOT, dir) }
+    .find { |dir| Dir.exist?(dir) && Dir.glob(File.join(dir, "*.aab")).any? }
+
+  UI.user_error!(
+    "No Android App Bundle found. Checked: #{candidate_directories.map { |dir| File.join(ANDROID_BUNDLE_ROOT, dir) }.join(', ')}"
+  ) unless bundle_dir
+
+  Dir.glob(File.join(bundle_dir, "*.aab")).max_by { |path| File.mtime(path) }
 end
 
 default_platform(:ios)
