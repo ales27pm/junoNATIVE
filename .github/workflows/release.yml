@@ -1,4 +1,4 @@
-name: Release QA Build
+name: Release QA Build and Deploy
 
 on:
   workflow_run:
@@ -53,9 +53,17 @@ jobs:
       - name: iOS Fastlane release
         env:
           APP_STORE_CONNECT_API_KEY_PATH: ./asc_key.json
+          FASTLANE_SKIP_UPDATE_CHECK: true
         run: |
           fastlane ios release
           rm -f ./asc_key.json
+
+      - name: Upload iOS IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-app-store-binary
+          path: fastlane/build/ios/*.ipa
+          if-no-files-found: error
   
   android_release:
     needs: ios_release
@@ -87,6 +95,14 @@ jobs:
           gem install fastlane
 
       - name: Android Fastlane release
-        run: fastlane android release
         env:
           SUPPLY_JSON_KEY_DATA: ${{ secrets.GOOGLE_PLAY_JSON }}
+          FASTLANE_SKIP_UPDATE_CHECK: true
+        run: fastlane android release
+
+      - name: Upload Android App Bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-play-bundle
+          path: fastlane/build/android/*.aab
+          if-no-files-found: error

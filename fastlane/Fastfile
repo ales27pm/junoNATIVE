@@ -1,25 +1,51 @@
+require "fileutils"
+
 default_platform(:ios)
 
 platform :ios do
-  desc "Build and upload to TestFlight"
+  desc "Build and upload to TestFlight and App Store"
   lane :release do
+    output_dir = File.expand_path("fastlane/build/ios")
+    FileUtils.mkdir_p(output_dir)
+
     build_app(
       workspace: "ios/JunoNative.xcworkspace",
       scheme: "JunoNative",
-      export_method: "app-store"
+      export_method: "app-store",
+      output_directory: output_dir,
+      output_name: "JunoNative.ipa"
     )
+
     upload_to_testflight
+    upload_to_app_store(
+      skip_metadata: true,
+      skip_screenshots: true,
+      submit_for_review: false,
+      overwrite_screenshots: false
+    )
   end
 end
 
 platform :android do
   desc "Build and upload to Play Console internal track"
   lane :release do
+    output_dir = File.expand_path("fastlane/build/android")
+    FileUtils.mkdir_p(output_dir)
+
     gradle(
       task: "bundle",
       build_type: "Release",
-      project_dir: "android"
+      project_dir: "android",
     )
-    upload_to_play_store(track: "internal")
+
+    release_bundle = File.expand_path("android/app/build/outputs/bundle/release/app-release.aab")
+    unless File.exist?(release_bundle)
+      UI.user_error!("Android App Bundle not found at #{release_bundle}")
+    end
+
+    archived_bundle = File.join(output_dir, "app-release.aab")
+    FileUtils.cp(release_bundle, archived_bundle)
+
+    upload_to_play_store(track: "internal", aab: archived_bundle)
   end
 end
