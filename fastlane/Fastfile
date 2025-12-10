@@ -3,7 +3,7 @@ require "fileutils"
 default_platform(:ios)
 
 platform :ios do
-  desc "Build and upload to TestFlight and App Store"
+  desc "Build and upload to TestFlight"
   lane :release do
     output_dir = File.expand_path("fastlane/build/ios")
     FileUtils.mkdir_p(output_dir)
@@ -19,12 +19,6 @@ platform :ios do
     )
 
     upload_to_testflight
-    upload_to_app_store(
-      skip_metadata: true,
-      skip_screenshots: true,
-      submit_for_review: false,
-      overwrite_screenshots: false
-    )
   end
 end
 
