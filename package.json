@@ -1,0 +1,53 @@
+// ============================================================
+
+{
+  "name": "JunoNativeIOS",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "ios": "react-native run-ios",
+    "start": "react-native start"
+  },
+  "dependencies": {
+    "react": "18.2.0",
+    "react-native": "0.76.0",
+    "@react-native-community/slider": "^4.5.0"
+  }
+}
+
+
+// ============================================================
+// END OF TXT SCAFFOLD
+// ============================================================
+
+
+
+// ------------------------------------------------------------
+// PART 2 – Missing classes + wired engine
+// (from JunoNative_missing_classes_and_wiring.txt)
+// ------------------------------------------------------------
+
+// Juno Native – Missing Classes + Wiring
+// ============================================================
+// This file provides fully implemented versions of the classes and glue
+// that were previously only described in the scaffold:
+//
+//   * cpp/parser/Juno106PatchParser.hpp   (JUNO-106 SysEx → JunoPatch)
+//   * cpp/dsp/ParameterScaler.hpp         (hardware-like parameter curves)
+//   * cpp/dsp/BBDChorus.hpp               (dual‑LFO stereo BBD chorus)
+//   * Patched JunoEngine with:
+//       - loadJuno106Sysex()
+//       - applyPatch(const Juno106::JunoPatch&)
+//       - setChorusMode(int)
+//       - HPF step mapping (0/1/2/3 → 20/80/160/360 Hz)
+//
+// The code is written as if split into several files in the original
+// repo, but everything is concatenated here so you can copy‑paste into
+// your project.
+//
+// You can treat the JunoEngine definition below as the canonical one;
+// it is compatible with the earlier JunoVoice / BBDClockNoise /
+// PowerSupplySag / CableCapacitance / VoiceParams types that were
+// already present in the scaffold.
+
+// ============================================================
