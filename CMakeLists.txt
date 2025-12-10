@@ -36,12 +36,6 @@ set(TEST_SRC
   tests/integration/render_consistency.cpp
   # Add new test files here
 )
-# ------------------------------------------------------------
-set(TEST_SRC
-  tests/dsp/cpu_bench.cpp
-  tests/dsp/latency_test.cpp
-  tests/integration/render_consistency.cpp
-)
 
 add_executable(juno_tests ${TEST_SRC})
 
