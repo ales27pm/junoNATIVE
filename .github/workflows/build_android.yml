@@ -34,11 +34,12 @@ jobs:
         env:
           JAVA_HOME: ${{ steps.setup_java.outputs.path }}
           ANDROID_SDK_ROOT: ${{ env.ANDROID_SDK_ROOT }}
+          ANDROID_HOME: ${{ env.ANDROID_SDK_ROOT }}
         run: |
           set -euo pipefail
+          echo "apk_built=false" >> "$GITHUB_OUTPUT"
           if [ ! -f ./gradlew ]; then
             echo "gradlew not found; skipping Android build for native engine."
-            echo "apk_built=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
