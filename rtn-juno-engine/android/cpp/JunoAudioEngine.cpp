@@ -75,27 +75,27 @@ void JunoAudioEngine::stop() {
 }
 
 aaudio_data_callback_result_t
-JunoAudioEngine::renderCB(AAudioStream * /*stream*/,
-                          void *user,
-                          void *audioData,
+JunoAudioEngine::renderCB(AAudioStream* /*stream*/,
+                          void* user,
+                          void* audioData,
                           int32_t frames) {
-    auto *self = reinterpret_cast<JunoAudioEngine *>(user);
+    auto* self = reinterpret_cast<JunoAudioEngine*>(user);
     if (!self || !self->dsp_ || frames <= 0) {
         return AAUDIO_CALLBACK_RESULT_CONTINUE;
     }
-    auto *self = reinterpret_cast<JunoAudioEngine *>(user);
-    if (!self || !self->dsp_ || self->l_buf_.size() < frames) {
+
+    // Ensure buffers are large enough for this callback
+    if (self->leftBuffer_.size() < static_cast<size_t>(frames) ||
+        self->rightBuffer_.size() < static_cast<size_t>(frames)) {
         return AAUDIO_CALLBACK_RESULT_CONTINUE;
     }
 
-    float *buffer = static_cast<float *>(audioData);
+    float* buffer = static_cast<float*>(audioData);
 
-    self->dsp_->renderAudio(self->l_buf_.data(), self->r_buf_.data(), frames);
+    self->dsp_->renderAudio(self->leftBuffer_.data(), self->rightBuffer_.data(), frames);
 
     for (int i = 0; i < frames; ++i) {
-        buffer[i * 2]     = self->l_buf_[i];
-        buffer[i * 2 + 1] = self->r_buf_[i];
-    }
+        buffer[i * 2]     = self->leftBuffer_[i];
         buffer[i * 2 + 1] = self->rightBuffer_[i];
     }
 
