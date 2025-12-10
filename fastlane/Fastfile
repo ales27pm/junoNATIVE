@@ -7,7 +7,11 @@ ANDROID_BUNDLE_ROOT = ENV.fetch("ANDROID_BUNDLE_OUTPUT_DIR", File.join(ROOT_DIR,
 ANDROID_BUNDLE_PATH = ENV["ANDROID_RELEASE_BUNDLE_PATH"]
 
 def resolve_android_bundle(build_type)
-  return File.expand_path(ANDROID_BUNDLE_PATH, ROOT_DIR) if ANDROID_BUNDLE_PATH
+  if ANDROID_BUNDLE_PATH
+    resolved_bundle_path = File.expand_path(ANDROID_BUNDLE_PATH, ROOT_DIR)
+    UI.user_error!("Explicit Android App Bundle not found at #{resolved_bundle_path}") unless File.exist?(resolved_bundle_path)
+    return resolved_bundle_path
+  end
 
   normalized_build_type = build_type.to_s
   normalized_build_type[0] = normalized_build_type[0].downcase if normalized_build_type.length.positive?
@@ -18,14 +22,27 @@ def resolve_android_bundle(build_type)
     build_type.to_s.downcase
   ].uniq
 
+  kebab_build_type = build_type.to_s.gsub(/([a-z0-9])([A-Z])/, '\1-\2').downcase
+  candidate_file_names = [
+    "app-#{normalized_build_type}.aab",
+    "app-#{build_type}.aab",
+    "app-#{build_type.to_s.downcase}.aab",
+    "app-#{kebab_build_type}.aab",
+    "*.aab"
+  ].uniq
+
   bundle_dir = candidate_directories.map { |dir| File.join(ANDROID_BUNDLE_ROOT, dir) }
-    .find { |dir| Dir.exist?(dir) && Dir.glob(File.join(dir, "*.aab")).any? }
+    .find do |dir|
+      Dir.exist?(dir) && candidate_file_names.any? { |file_pattern| Dir.glob(File.join(dir, file_pattern)).any? }
+    end
 
   UI.user_error!(
-    "No Android App Bundle found. Checked: #{candidate_directories.map { |dir| File.join(ANDROID_BUNDLE_ROOT, dir) }.join(', ')}"
+    "No Android App Bundle found. Checked directories: #{candidate_directories.map { |dir| File.join(ANDROID_BUNDLE_ROOT, dir) }.join(', ')}"
   ) unless bundle_dir
 
-  Dir.glob(File.join(bundle_dir, "*.aab")).max_by { |path| File.mtime(path) }
+  Dir.glob(candidate_file_names.map { |file_pattern| File.join(bundle_dir, file_pattern) }).flatten
+    .select { |path| File.file?(path) }
+    .max_by { |path| File.mtime(path) }
 end
 
 default_platform(:ios)
