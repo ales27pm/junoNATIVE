@@ -45,7 +45,7 @@ jobs:
         run: |
           set -euo pipefail
           umask 177
-          cat > ./asc_key.json << 'EOF'
+          cat > ./asc_key.json << EOF
           ${APPLE_API_KEY_JSON}
           EOF
           test -s ./asc_key.json
