@@ -33,18 +33,9 @@ Java_com_pulsr_junonative_JunoEngineModule_nativeStart(JNIEnv * /*env*/,
 JNIEXPORT void JNICALL
 Java_com_pulsr_junonative_JunoEngineModule_nativeStop(JNIEnv * /*env*/,
                                                       jobject /*thiz*/) {
-    std::shared_ptr<JunoAudioEngine> localEngine;
-    {
-        std::lock_guard<std::mutex> lock(engineMutex);
-        localEngine = engine;
-    }
-
-    if (localEngine) {
-        localEngine->stop();
-    }
-
-    {
-        std::lock_guard<std::mutex> lock(engineMutex);
+    std::lock_guard<std::mutex> lock(engineMutex);
+    if (engine) {
+        engine->stop();
         engine.reset();
     }
 }

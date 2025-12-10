@@ -2,6 +2,7 @@
 #include <aaudio/AAudio.h>
 #include <memory>
 #include <string>
+#include <mutex>
 #include <vector>
 #include "JunoDSPEngine.hpp"
 
@@ -30,6 +31,7 @@ private:
                                                   void *audioData,
                                                   int32_t numFrames);
 
+    std::mutex streamMutex_;
     AAudioStream *stream_ = nullptr;
     std::unique_ptr<JunoDSPEngine> dsp_;
     std::vector<float> leftBuffer_;

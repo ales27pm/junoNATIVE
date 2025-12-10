@@ -9,6 +9,12 @@ JunoAudioEngine::~JunoAudioEngine() {
 }
 
 bool JunoAudioEngine::start(int sr, int bs) {
+    std::lock_guard<std::mutex> lock(streamMutex_);
+
+    if (stream_) {
+        return true;
+    }
+
     if (!dsp_) {
         dsp_ = std::make_unique<JunoDSPEngine>();
     }
@@ -53,6 +59,8 @@ bool JunoAudioEngine::start(int sr, int bs) {
 }
 
 void JunoAudioEngine::stop() {
+    std::lock_guard<std::mutex> lock(streamMutex_);
+
     if (stream_) {
         AAudioStream_requestStop(stream_);
         AAudioStream_close(stream_);
