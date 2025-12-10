@@ -1,9 +1,9 @@
 name: Release QA Build
 
 on:
-  push:
-    tags:
-      - "v*.*.*"
+  workflow_run:
+    workflows: ["CI"] # A new, single workflow that runs all builds
+    types: [completed]
   workflow_dispatch:
 
 jobs:
