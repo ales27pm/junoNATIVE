@@ -46,13 +46,13 @@ void JunoDSPEngine::noteOff(int note) {
 
 void JunoDSPEngine::setParameter(const std::string &id, float v) {
     params_.set(id, v);
-}
-
-void JunoDSPEngine::loadPatch(const Juno106::JunoPatch &p) {
-    // Map raw 0–127 patch values to musically sensible ranges.
-    auto map01 = [](unsigned char v) {
-        return static_cast<float>(v) / 127.0f;
-    };
+void JunoDSPEngine::noteOff(int note) {
+    // Find any voice playing this note and trigger its release.
+    for (auto &v : voices_) {
+        if (v->isActive() && v->getMidiNote() == note) {
+            v->noteOff();
+        }
+    }
 
     float cutoffNorm    = map01(p.vcfCutoff);
     // 50 Hz → 15 kHz log curve
