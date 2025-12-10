@@ -1,0 +1,17 @@
+platform :ios, '13.0'
+
+# Keep Cocoapods from attempting to edit a non-existent Xcode project.
+install! 'cocoapods', :generate_multiple_pod_projects => true, :integrate_targets => false
+
+source 'https://github.com/CocoaPods/Specs.git'
+
+# Lightweight placeholder target so CI `pod install` succeeds even when the
+# full Xcode project has not been generated yet. When the iOS host project is
+# added, this Podfile will automatically integrate React Native pods if they
+# are available under the app workspace.
+target 'JunoNative' do
+  react_podspec = File.expand_path('../Juno-Native/node_modules/react-native/React.podspec', __dir__)
+  if File.exist?(react_podspec)
+    pod 'React-Core', :path => react_podspec
+  end
+end
