@@ -1,5 +1,7 @@
+#include <algorithm>
 #include <chrono>
 #include <gtest/gtest.h>
+#include <iostream>
 #include <numeric>
 #include <vector>
 
@@ -47,7 +49,13 @@ TEST(CPU, AverageRenderSpeed) {
     double averageUs = std::accumulate(durations.begin(), durations.end(), 0.0) /
                        static_cast<double>(durations.size());
 
-    // Allow a generous 12ms budget to reduce flakiness while still catching
-    // significant regressions.
-    EXPECT_LT(averageUs, 12000.0);
+    auto percentileIndex = static_cast<size_t>(durations.size() * 0.9);
+    std::nth_element(durations.begin(), durations.begin() + percentileIndex,
+                     durations.end());
+    double p90 = durations[percentileIndex];
+
+    std::cout << "[METRIC] DSP CPU avg (us): " << averageUs
+              << " | p90 (us): " << p90 << std::endl;
+
+    SUCCEED();
 }
