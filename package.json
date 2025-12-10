@@ -9,6 +9,7 @@
   },
   "scripts": {
     "test": "npm --prefix Juno-Native test",
+    "validate:packages": "node scripts/validate-package-json.js",
     "ios": "react-native run-ios",
     "start": "react-native start"
   },
