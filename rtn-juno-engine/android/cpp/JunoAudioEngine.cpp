@@ -28,6 +28,7 @@ bool JunoAudioEngine::start(int sr, int bs) {
     AAudioStreamBuilder *builder = nullptr;
     aaudio_result_t res = AAudio_createStreamBuilder(&builder);
     if (res != AAUDIO_OK || !builder) {
+        dsp_->stop();
         return false;
     }
 
@@ -44,6 +45,7 @@ bool JunoAudioEngine::start(int sr, int bs) {
 
     if (res != AAUDIO_OK || !stream_) {
         stream_ = nullptr;
+        dsp_->stop();
         return false;
     }
 
@@ -58,9 +60,11 @@ bool JunoAudioEngine::start(int sr, int bs) {
     if (res != AAUDIO_OK) {
         AAudioStream_close(stream_);
         stream_ = nullptr;
+        dsp_->stop();
         return false;
     }
 
+    dsp_->start();
     return true;
 }
 
