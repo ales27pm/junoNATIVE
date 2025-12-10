@@ -59,12 +59,13 @@ if File.exist?(react_native_pods)
       raise Pod::Informative, 'Missing React Native CLI; install it to enable native module autolinking.'
     end
 
-    config = use_native_modules!(
-      package_json_path: File.expand_path('../Juno-Native/package.json', __dir__)
-    )
+    config = use_native_modules!([
+      'node',
+      '-e',
+      "process.chdir('#{File.expand_path('../Juno-Native', __dir__)}');process.argv=['','', 'config', '--project-root', '#{File.expand_path('..', __dir__)}'];require('@react-native-community/cli').run()"
+    ])
 
-    config[:reactNativePath] = react_native_path
-    config[:reactNativePath] = File.expand_path(config[:reactNativePath]) if config[:reactNativePath]
+    config[:reactNativePath] = File.expand_path(react_native_path)
 
     if xcodebuild_supported
       if xcodebuild_version && xcodebuild_version < recommended_xcode_version
