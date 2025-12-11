@@ -7,7 +7,7 @@
   <key>teamID</key>
   <string></string>
   <key>signingStyle</key>
-  <string>manual</string>
+  <string>automatic</string>
   <key>provisioningProfiles</key>
   <dict></dict>
   <key>uploadSymbols</key>
