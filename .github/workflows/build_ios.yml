@@ -7,6 +7,8 @@ on:
 jobs:
   ios:
     runs-on: macos-14
+    env:
+      DERIVED_DATA: build
     defaults:
       run:
         working-directory: .
@@ -36,12 +38,12 @@ jobs:
             -scheme JunoNative \
             -sdk iphonesimulator \
             -configuration Debug \
-            -derivedDataPath build \
+            -derivedDataPath "$DERIVED_DATA" \
             build
 
       - name: Upload iOS simulator app
         uses: actions/upload-artifact@v4
         with:
           name: JunoNative-iOS-sim-build
-          path: build/Build/Products/Debug-iphonesimulator/JunoNative.app
+          path: ${{ env.DERIVED_DATA }}/Build/Products/Debug-iphonesimulator/JunoNative.app
           if-no-files-found: error
