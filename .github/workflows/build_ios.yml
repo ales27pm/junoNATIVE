@@ -4,19 +4,29 @@ on: [push, pull_request]
 
 jobs:
   ios:
-    runs-on: macos-14
+    runs-on: macos-15
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Select Xcode 16.1
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '16.1'
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
       - name: Install JS deps
-        run: npm ci --prefix Juno-Native
+        working-directory: Juno-Native
+        run: |
+          # Ensure development dependencies (including the React Native CLI used by the Podfile)
+          # are available even if NODE_ENV is set to production by the runner environment.
+          export NODE_ENV=development
+          npm ci --include=dev
       - name: Install CocoaPods
         working-directory: ios
         run: pod install --repo-update

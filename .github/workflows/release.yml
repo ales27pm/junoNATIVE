@@ -1,4 +1,4 @@
-name: Release QA Build
+name: Release QA Build and Deploy
 
 on:
   workflow_run:
@@ -8,11 +8,16 @@ on:
 
 jobs:
   ios_release:
-    runs-on: macos-14
+    runs-on: macos-15
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Select Xcode 16.1
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '16.1'
 
       - name: Setup Ruby
         uses: ruby/setup-ruby@v1
@@ -28,6 +33,9 @@ jobs:
         run: |
           npm ci --prefix Juno-Native
           gem install fastlane
+
+      - name: Compile TurboModules
+        run: bash scripts/compile-turbo-modules.sh
 
       # Optional version bump script; ensure scripts/bumpVersion.js exists if you keep this.
       - name: Bump version (optional)
@@ -53,9 +61,24 @@ jobs:
       - name: iOS Fastlane release
         env:
           APP_STORE_CONNECT_API_KEY_PATH: ./asc_key.json
+          FASTLANE_SKIP_UPDATE_CHECK: true
         run: |
           fastlane ios release
           rm -f ./asc_key.json
+
+      - name: Upload TurboModule artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: turbomodules-generated-ios
+          path: fastlane/build/codegen/**
+          if-no-files-found: error
+
+      - name: Upload iOS IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-app-store-binary
+          path: fastlane/build/ios/*.ipa
+          if-no-files-found: error
   
   android_release:
     needs: ios_release
@@ -86,7 +109,25 @@ jobs:
           npm ci --prefix Juno-Native
           gem install fastlane
 
+      - name: Compile TurboModules
+        run: bash scripts/compile-turbo-modules.sh
+
       - name: Android Fastlane release
-        run: fastlane android release
         env:
           SUPPLY_JSON_KEY_DATA: ${{ secrets.GOOGLE_PLAY_JSON }}
+          FASTLANE_SKIP_UPDATE_CHECK: true
+        run: fastlane android release
+
+      - name: Upload Android App Bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-play-bundle
+          path: fastlane/build/android/*.aab
+          if-no-files-found: error
+
+      - name: Upload TurboModule artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: turbomodules-generated-android
+          path: fastlane/build/codegen/**
+          if-no-files-found: error
