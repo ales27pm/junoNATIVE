@@ -2,6 +2,10 @@ require "plist"
 
 default_platform(:ios)
 
+ROOT_DIR = File.expand_path("..", __dir__)
+
+ENV["SPACESHIP_CONNECT_API_IN_HOUSE"] ||= "false"
+
 # Helper to construct App Store Connect API key hash from environment variables
 # Helper to construct App Store Connect API key hash from environment variables
 def app_store_api_key_hash
@@ -37,8 +41,8 @@ end
 
 # iOS build options shared between local + CI
 def ios_build_options
-  workspace_path = File.expand_path("../ios/JunoNative.xcworkspace", __dir__)
-  project_path   = File.expand_path("../ios/JunoNative.xcodeproj", __dir__)
+  workspace_path = File.join(ROOT_DIR, "ios", "JunoNative.xcworkspace")
+  project_path   = File.join(ROOT_DIR, "ios", "JunoNative.xcodeproj")
 
   has_workspace = File.exist?(workspace_path)
   has_project   = File.exist?(project_path)
@@ -51,7 +55,7 @@ def ios_build_options
     UI.user_error!("Neither #{workspace_path} nor #{project_path} exists. Check your repo structure and CocoaPods installation.")
   end
 
-  export_options_plist = File.expand_path("../ios/exportOptions.plist", __dir__)
+  export_options_plist = File.join(ROOT_DIR, "ios", "exportOptions.plist")
   unless File.exist?(export_options_plist)
     UI.user_error!("exportOptions.plist not found at #{export_options_plist}")
   end
@@ -81,7 +85,7 @@ def ios_build_options
     configuration:    "Release",
     clean:            true,
 
-    output_directory: File.expand_path("../fastlane/build/ios", __dir__),
+    output_directory: File.join(ROOT_DIR, "fastlane", "build", "ios"),
     output_name:      ENV["IOS_OUTPUT_NAME"] || "JunoNative.ipa",
 
     silent:           false,
@@ -95,7 +99,7 @@ def ios_build_options
 
     skip_profile_detection: false,
     result_bundle:          true,
-    buildlog_path:         File.expand_path("../fastlane/logs", __dir__),
+    buildlog_path:         File.join(ROOT_DIR, "fastlane", "logs"),
 
     # Help Xcode pick the right team in CI
     export_xcargs: "DEVELOPMENT_TEAM=#{ENV['APPLE_TEAM_ID']}"
@@ -113,7 +117,7 @@ platform :ios do
   desc "Compile the C++ DSP engine and run basic tests"
   lane :compile_dsp_engine do
     # Fastfile lives in fastlane/, so the project root is one level up
-    project_root = File.expand_path("..", __dir__)
+    project_root = ROOT_DIR
     build_dir    = File.join(project_root, "fastlane", "build", "cmake")
 
     sh("cmake -S #{project_root} -B #{build_dir} -DCMAKE_BUILD_TYPE=Release")
@@ -123,7 +127,7 @@ platform :ios do
   desc "Compile React Native TurboModules (JSI/Native codegen)"
   lane :compile_turbo_modules do
     # Fastfile is in fastlane/, project root is one level up
-    project_root = File.expand_path("..", __dir__)
+    project_root = ROOT_DIR
     script_path  = File.join(project_root, "scripts", "compile-turbo-modules.sh")
 
     unless File.exist?(script_path)
@@ -136,7 +140,7 @@ platform :ios do
 
   # --- CocoaPods installation lane, correct path + working dir ---
   private_lane :install_cocoapods do
-    ios_dir = File.expand_path("../ios", __dir__)
+    ios_dir = File.join(ROOT_DIR, "ios")
     podfile = File.join(ios_dir, "Podfile")
 
     unless File.exist?(podfile)
@@ -156,8 +160,8 @@ platform :ios do
   end
 
   private_lane :compile_swift_sources do
-    workspace_path = File.expand_path("../ios/JunoNative.xcworkspace", __dir__)
-    project_path   = File.expand_path("../ios/JunoNative.xcodeproj", __dir__)
+    workspace_path = File.join(ROOT_DIR, "ios", "JunoNative.xcworkspace")
+    project_path   = File.join(ROOT_DIR, "ios", "JunoNative.xcodeproj")
 
     xcpretty_available = system("which xcpretty >/dev/null 2>&1")
     formatter_suffix = xcpretty_available ? " | xcpretty --no-color" : ""
