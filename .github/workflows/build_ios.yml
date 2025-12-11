@@ -13,6 +13,10 @@ jobs:
       run:
         working-directory: .
 
+    # CI notes:
+    # - Xcode may emit libJunoNative.a into SDK/configuration-specific product folders, so the build artifact is discovered and copied to artifact/libJunoNative.a for upload.
+    # - Fastlane invokes scripts/compile-turbo-modules.sh via an absolute path (see fastlane/Fastfile) because lanes do not always run from the repository root.
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -41,9 +45,21 @@ jobs:
             -derivedDataPath "$DERIVED_DATA" \
             build
 
+      - name: Collect iOS simulator library
+        run: |
+          set -euo pipefail
+          mkdir -p artifact
+          found=$(find "$DERIVED_DATA/Build/Products" -name 'libJunoNative.a' -print -quit)
+          if [ -z "$found" ]; then
+            echo "libJunoNative.a not found under $DERIVED_DATA/Build/Products"
+            exit 1
+          fi
+          echo "Found libJunoNative.a at $found"
+          cp "$found" artifact/libJunoNative.a
+
       - name: Upload iOS simulator library
         uses: actions/upload-artifact@v4
         with:
           name: JunoNative-iOS-sim-lib
-          path: ${{ env.DERIVED_DATA }}/Build/Products/**/libJunoNative.a
+          path: artifact/libJunoNative.a
           if-no-files-found: error
