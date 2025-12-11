@@ -127,8 +127,8 @@ def app_store_api_key_hash
   }
 end
 
-# Choose workspace or project dynamically for build_app, and inject api_key if provided.
-def ios_build_options(api_key: nil)
+# Choose workspace or project dynamically for build_app.
+def ios_build_options
   ios_paths = resolve_ios_project_paths
   base = {
     scheme:          "JunoNative",
@@ -145,7 +145,6 @@ def ios_build_options(api_key: nil)
     base[:project] = ios_paths[:path]
   end
 
-  base[:api_key] = api_key if api_key
   base
 end
 
@@ -181,7 +180,7 @@ platform :ios do
 
     api_key = app_store_api_key_hash
 
-    build_app(ios_build_options(api_key: api_key))
+    build_app(ios_build_options)
 
     upload_to_testflight(
       api_key: api_key,
@@ -201,7 +200,7 @@ platform :ios do
 
     api_key = app_store_api_key_hash
 
-    build_app(ios_build_options(api_key: api_key))
+    build_app(ios_build_options)
 
     upload_to_testflight(
       api_key: api_key,
