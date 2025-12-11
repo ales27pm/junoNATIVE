@@ -49,7 +49,12 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p artifact
-          found=$(find "$DERIVED_DATA/Build/Products" \( -name 'libJunoNative.a' -o -name 'libPods-JunoNative.a' \) -print -quit)
+          if ! found=$(find "$DERIVED_DATA/Build/Products" \( -name 'libJunoNative.a' -o -name 'libPods-JunoNative.a' \) -print -quit); then
+            if [ ! -d "$DERIVED_DATA/Build/Products" ]; then
+              echo "Error: Build products directory not found at $DERIVED_DATA/Build/Products" >&2
+            fi
+            found=""
+          fi
 
           if [ -z "$found" ]; then
             echo "Neither libJunoNative.a nor libPods-JunoNative.a found under $DERIVED_DATA/Build/Products"
