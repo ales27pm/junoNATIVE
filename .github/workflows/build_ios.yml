@@ -18,7 +18,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
       - name: Install JS deps
         run: |
@@ -36,6 +36,7 @@ jobs:
             -scheme JunoNative \
             -sdk iphonesimulator \
             -configuration Debug \
+            -derivedDataPath build \
             build
 
       - name: Upload iOS simulator app

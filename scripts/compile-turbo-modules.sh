@@ -11,7 +11,7 @@ echo "[codegen] Output:   $OUTPUT_DIR"
 
 if [ ! -d "$APP_DIR/node_modules" ]; then
   echo "[codegen] node_modules not found. Installing JavaScript dependencies..."
-  npm ci
+  (cd "$ROOT_DIR" && npm ci)
 else
   echo "[codegen] node_modules already present; skipping npm ci."
 fi
