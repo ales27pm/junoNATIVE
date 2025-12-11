@@ -246,7 +246,7 @@ platform :ios do
       app_identifier: ENV["APP_IDENTIFIER"],
       api_key: api_key,
       adhoc: false,
-      readonly: true
+      readonly: false
     )
     profile_name = Actions.lane_context[SharedValues::SIGH_PROFILE_NAME]
     profile_name ||= File.basename(profile_path, ".mobileprovision") unless profile_path.to_s.strip.empty?
