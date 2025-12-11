@@ -3,6 +3,7 @@ require "base64"
 
 # --- Paths & build configuration ---
 
+# Repo root (Fastfile is in fastlane/, so go one level up)
 ROOT_DIR = File.expand_path("..", __dir__)
 
 IOS_OUTPUT_DIR = ENV.fetch(
@@ -85,20 +86,45 @@ def compile_cpp_engine
   sh("cmake --build #{CMAKE_BUILD_DIR} --config #{CMAKE_CONFIGURATION}")
 end
 
+# Auto-detect workspace vs project for the initial build sanity check
 def compile_swift_sources
-  sh(%Q[
-    set -o pipefail && xcodebuild \
-      -workspace ios/JunoNative.xcworkspace \
-      -scheme JunoNative \
-      -configuration #{IOS_BUILD_CONFIGURATION} \
-      -sdk #{IOS_SDK} \
-      -destination '#{IOS_BUILD_DESTINATION}' \
-      CODE_SIGNING_ALLOWED=NO \
-      build
-  ])
+  workspace_path = File.join("ios", "JunoNative.xcworkspace")
+  project_path   = File.join("ios", "JunoNative.xcodeproj")
+
+  if File.exist?(workspace_path)
+    UI.message("Using Xcode workspace at #{workspace_path}")
+    sh(%Q[
+      set -o pipefail && xcodebuild \
+        -workspace #{workspace_path} \
+        -scheme JunoNative \
+        -configuration #{IOS_BUILD_CONFIGURATION} \
+        -sdk #{IOS_SDK} \
+        -destination '#{IOS_BUILD_DESTINATION}' \
+        CODE_SIGNING_ALLOWED=NO \
+        build
+    ])
+  elsif File.exist?(project_path)
+    UI.message("Workspace not found, falling back to Xcode project at #{project_path}")
+    sh(%Q[
+      set -o pipefail && xcodebuild \
+        -project #{project_path} \
+        -scheme JunoNative \
+        -configuration #{IOS_BUILD_CONFIGURATION} \
+        -sdk #{IOS_SDK} \
+        -destination '#{IOS_BUILD_DESTINATION}' \
+        CODE_SIGNING_ALLOWED=NO \
+        build
+    ])
+  else
+    UI.user_error!("Neither #{workspace_path} nor #{project_path} exists. Check your repo structure and CocoaPods installation.")
+  end
 end
 
 # Build a proper Hash for Fastlane's api_key parameter using your base64 p8
+# Uses your existing secrets:
+#  - APP_STORE_CONNECT_API_KEY_ID
+#  - APP_STORE_CONNECT_API_ISSUER_ID
+#  - APP_STORE_CONNECT_API_KEY_BASE64
 def app_store_api_key_hash
   decoded_key = Base64.decode64(ENV.fetch("APP_STORE_CONNECT_API_KEY_BASE64"))
 
@@ -108,6 +134,33 @@ def app_store_api_key_hash
     key:      decoded_key,
     in_house: false
   }
+end
+
+# Choose workspace or project dynamically for build_app,
+# and inject api_key if provided.
+def ios_build_options(api_key: nil)
+  workspace_path = File.join("ios", "JunoNative.xcworkspace")
+  project_path   = File.join("ios", "JunoNative.xcodeproj")
+
+  base = {
+    scheme: "JunoNative",
+    configuration: IOS_BUILD_CONFIGURATION,
+    export_method: "app-store",
+    destination: "generic/platform=iOS",
+    output_directory: IOS_OUTPUT_DIR,
+    output_name: ENV.fetch("IOS_OUTPUT_NAME", "JunoNative.ipa")
+  }
+
+  if File.exist?(workspace_path)
+    base[:workspace] = workspace_path
+  elsif File.exist?(project_path)
+    base[:project] = project_path
+  else
+    UI.user_error!("Neither #{workspace_path} nor #{project_path} exists. Cannot determine Xcode target for build_app.")
+  end
+
+  base[:api_key] = api_key if api_key
+  base
 end
 
 default_platform(:ios)
@@ -120,17 +173,13 @@ platform :ios do
     FileUtils.mkdir_p(IOS_OUTPUT_DIR)
 
     compile_cpp_engine
+
     script_path = File.join(ROOT_DIR, "scripts/compile-turbo-modules.sh")
     sh("bash #{script_path}") if File.exist?(script_path)
+
     compile_swift_sources
 
-    build_app(
-      workspace: "ios/JunoNative.xcworkspace",
-      scheme: "JunoNative",
-      export_method: "app-store",
-      output_directory: IOS_OUTPUT_DIR,
-      output_name: ENV.fetch("IOS_OUTPUT_NAME", "JunoNative.ipa")
-    )
+    build_app(ios_build_options)
 
     upload_to_testflight
   end
@@ -140,22 +189,15 @@ platform :ios do
     FileUtils.mkdir_p(IOS_OUTPUT_DIR)
 
     compile_cpp_engine
+
     script_path = File.join(ROOT_DIR, "scripts/compile-turbo-modules.sh")
     sh("bash #{script_path}") if File.exist?(script_path)
+
     compile_swift_sources
 
     api_key = app_store_api_key_hash
 
-    build_app(
-      workspace: "ios/JunoNative.xcworkspace",
-      scheme: "JunoNative",
-      configuration: IOS_BUILD_CONFIGURATION,
-      export_method: "app-store",
-      destination: "generic/platform=iOS",
-      output_directory: IOS_OUTPUT_DIR,
-      output_name: ENV.fetch("IOS_OUTPUT_NAME", "JunoNative.ipa"),
-      api_key: api_key
-    )
+    build_app(ios_build_options(api_key: api_key))
 
     upload_to_testflight(
       api_key: api_key,
@@ -168,22 +210,15 @@ platform :ios do
     FileUtils.mkdir_p(IOS_OUTPUT_DIR)
 
     compile_cpp_engine
+
     script_path = File.join(ROOT_DIR, "scripts/compile-turbo-modules.sh")
     sh("bash #{script_path}") if File.exist?(script_path)
+
     compile_swift_sources
 
     api_key = app_store_api_key_hash
 
-    build_app(
-      workspace: "ios/JunoNative.xcworkspace",
-      scheme: "JunoNative",
-      configuration: IOS_BUILD_CONFIGURATION,
-      export_method: "app-store",
-      destination: "generic/platform=iOS",
-      output_directory: IOS_OUTPUT_DIR,
-      output_name: ENV.fetch("IOS_OUTPUT_NAME", "JunoNative.ipa"),
-      api_key: api_key
-    )
+    build_app(ios_build_options(api_key: api_key))
 
     upload_to_testflight(
       api_key: api_key,
@@ -200,6 +235,7 @@ platform :android do
     FileUtils.mkdir_p(ANDROID_OUTPUT_DIR)
 
     compile_cpp_engine
+
     script_path = File.join(ROOT_DIR, "scripts/compile-turbo-modules.sh")
     sh("bash #{script_path}") if File.exist?(script_path)
 
