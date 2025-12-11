@@ -25,6 +25,8 @@ const DEFAULT_MAPPING: { [key: string]: number } = {
   dcoLfoDepth: 41,
 };
 
+const Separator = () => <View style={styles.sep} />;
+
 export const PatchBrowser: React.FC = () => {
   const [loadingId, setLoadingId] = useState<string | null>(null);
 
@@ -85,9 +87,9 @@ export const PatchBrowser: React.FC = () => {
       </Text>
       <FlatList
         data={FACTORY_PATCHES}
-        keyExtractor={p => p.id}
+        keyExtractor={(p) => p.id}
         renderItem={renderItem}
-        ItemSeparatorComponent={() => <View style={styles.sep} />}
+        ItemSeparatorComponent={Separator}
       />
     </View>
   );

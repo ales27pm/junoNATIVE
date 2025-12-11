@@ -1,0 +1,7 @@
+node_modules/
+android/app/build/
+ios/Pods/
+ios/build/
+build/
+fastlane/build/
+.DS_Store

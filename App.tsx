@@ -22,7 +22,7 @@ const App = () => {
 
   useEffect(() => {
     JunoNative.startAudio();
-    JunoNative.setAnalogCharacter(settings);
+    JunoNative.setAnalogCharacter(defaultSettings);
 
     return () => {
       JunoNative.stopAudio();

@@ -1,6 +1,8 @@
 name: Android Build
 
-on: [push, pull_request]
+on:
+  push:
+  pull_request:
 
 jobs:
   build:
@@ -10,70 +12,27 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 20
 
       - name: Setup Java
-        id: setup_java
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v3
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: 17
 
       - name: Install JS dependencies
-        run: npm ci --prefix Juno-Native
+        run: npm ci
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Build Android debug APK
+        working-directory: android
+        run: ./gradlew assembleDebug --no-daemon
 
-      - name: Build Android Debug
-        id: build_android_debug
-        working-directory: rtn-juno-engine/android
-        env:
-          JAVA_HOME: ${{ steps.setup_java.outputs.path }}
-          ANDROID_SDK_ROOT: ${{ env.ANDROID_SDK_ROOT }}
-          ANDROID_HOME: ${{ env.ANDROID_SDK_ROOT }}
-        run: |
-          set -euo pipefail
-          : "${GITHUB_OUTPUT:?Missing GITHUB_OUTPUT for step outputs}"
-          echo "apk_built=false" >> "$GITHUB_OUTPUT"
-          if [ ! -f ./gradlew ]; then
-            echo "gradlew not found; skipping Android build for native engine."
-            if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
-              {
-                echo "### Android debug build"
-                echo
-                echo "- Skipped: Gradle wrapper not found in rtn-juno-engine/android."
-              } >>"$GITHUB_STEP_SUMMARY"
-            fi
-            exit 0
-          fi
-
-          export PATH="$JAVA_HOME/bin:$PATH"
-          # sdkmanager closes stdin early after accepting all licenses, which can
-          # raise SIGPIPE for the `yes` process when pipefail is enabled. Temporarily
-          # disable pipefail so the pipeline reports sdkmanager's exit status.
-          set +o pipefail
-          yes | sdkmanager --licenses >/dev/null
-          set -o pipefail
-          sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
-          chmod +x ./gradlew
-          ./gradlew clean assembleDebug --no-daemon --stacktrace
-
-          echo "apk_built=true" >> "$GITHUB_OUTPUT"
-          if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
-            {
-              echo "### Android debug build"
-              echo
-              echo "- Succeeded: APK produced at rtn-juno-engine/android/app/build/outputs/apk/debug/app-debug.apk"
-            } >>"$GITHUB_STEP_SUMMARY"
-          fi
-
-      - name: Upload debug APK
-        if: steps.build_android_debug.outputs.apk_built == 'true'
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: JunoNative-android-debug
-          path: rtn-juno-engine/android/app/build/outputs/apk/debug/app-debug.apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error

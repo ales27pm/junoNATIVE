@@ -12,7 +12,9 @@ export const ParamOverlay: React.FC<ParamOverlayProps> = ({
   value,
   visible = true,
 }) => {
-  if (!visible || param == null || value == null) return null;
+  if (!visible || param == null || value == null) {
+    return null;
+  }
 
   return (
     <Animated.View style={styles.box}>
