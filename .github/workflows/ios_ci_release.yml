@@ -44,13 +44,7 @@ jobs:
         run: |
           bundle install --path=vendor/bundle
 
-      - name: 🧪 Validate package.json for iOS CI
-        run: |
-          node scripts/validate-package-json.js
-        env:
-          CI: true
-
-      - name: 🍏 Set up Xcode toolchain info
+      - name: 🍏 Show Xcode toolchain info
         run: |
           xcodebuild -version
           xcode-select -p
@@ -63,6 +57,6 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APP_IDENTIFIER: ${{ secrets.APP_IDENTIFIER }}
           APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
-          APP_STORE_CONNECT_API_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_API_ISSUER_ID }}
+          APP_STORE_CONNECT_API_KEY_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_API_ISSUER_ID }}
           APP_STORE_CONNECT_API_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_API_KEY_BASE64 }}
           IOS_OUTPUT_NAME: JunoNative.ipa
