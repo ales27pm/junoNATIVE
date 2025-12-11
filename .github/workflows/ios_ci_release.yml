@@ -14,9 +14,9 @@ jobs:
 
     env:
       MATCH_KEYCHAIN_PASSWORD: ${{ secrets.MATCH_KEYCHAIN_PASSWORD }}
-      APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APPLE_KEY_ID }}
-      APP_STORE_CONNECT_API_KEY_ISSUER_ID: ${{ secrets.APPLE_ISSUER_ID }}
-      APP_STORE_CONNECT_API_KEY: ${{ secrets.APPLE_KEY }}
+      APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+      APP_STORE_CONNECT_API_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_API_ISSUER_ID }}
+      APP_STORE_CONNECT_API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
       APP_IDENTIFIER: ${{ secrets.APP_IDENTIFIER }}
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
@@ -75,12 +75,11 @@ jobs:
             -exportOptionsPlist ios/exportOptions.plist
 
       - name: 🚀 Upload to TestFlight
-        uses: apple-actions/upload-testflight-build@v1
-        with:
-          app-path: ${{ runner.temp }}/output/JunoNative.ipa
-          issuer-id: ${{ secrets.APPLE_ISSUER_ID }}
-          api-key-id: ${{ secrets.APPLE_KEY_ID }}
-          api-private-key: ${{ secrets.APPLE_KEY }}
+        run: bundle exec fastlane release
+        env:
+          APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          APP_STORE_CONNECT_API_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_API_ISSUER_ID }}
+          APP_STORE_CONNECT_API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
 
       - name: 📦 Zip dSYM
         run: zip -r JunoNative.app.dSYM.zip "$RUNNER_TEMP/output/JunoNative.app.dSYM"
