@@ -127,16 +127,17 @@ def app_store_api_key_hash
   }
 end
 
-# Choose workspace or project dynamically for build_app (no api_key; authentication is handled by upload_to_testflight).
+# Choose workspace or project dynamically for build_app.
+# build_app must not receive api_key; authentication is handled by upload_to_testflight.
 def ios_build_options
   ios_paths = resolve_ios_project_paths
   base = {
-    scheme:          "JunoNative",
-    configuration:   IOS_BUILD_CONFIGURATION,
-    export_method:   "app-store",
-    destination:     IOS_BUILD_DESTINATION,
+    scheme:           "JunoNative",
+    configuration:    IOS_BUILD_CONFIGURATION,
+    export_method:    "app-store",
+    destination:      IOS_BUILD_DESTINATION,
     output_directory: IOS_OUTPUT_DIR,
-    output_name:     ENV.fetch("IOS_OUTPUT_NAME", "JunoNative.ipa")
+    output_name:      ENV.fetch("IOS_OUTPUT_NAME", "JunoNative.ipa")
   }
 
   if ios_paths[:type] == :workspace
@@ -161,7 +162,9 @@ platform :ios do
 
     compile_swift_sources
 
-    build_app(ios_build_options)
+    build_options = ios_build_options
+
+    build_app(build_options)
 
     upload_to_testflight(
       skip_waiting_for_build_processing: true
@@ -180,7 +183,9 @@ platform :ios do
 
     api_key = app_store_api_key_hash
 
-    build_app(ios_build_options)
+    build_options = ios_build_options
+
+    build_app(build_options)
 
     upload_to_testflight(
       api_key: api_key,
@@ -200,7 +205,9 @@ platform :ios do
 
     api_key = app_store_api_key_hash
 
-    build_app(ios_build_options)
+    build_options = ios_build_options
+
+    build_app(build_options)
 
     upload_to_testflight(
       api_key: api_key,
