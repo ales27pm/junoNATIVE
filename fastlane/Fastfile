@@ -24,9 +24,9 @@ def resolve_ios_project_paths
     project_path = File.join(ROOT_DIR, paths[:project])
 
     if File.exist?(workspace_path)
-      return { type: :workspace, path: paths[:workspace] }
+      return { type: :workspace, path: workspace_path }
     elsif File.exist?(project_path)
-      return { type: :project, path: paths[:project] }
+      return { type: :project, path: project_path }
     end
   end
 
@@ -134,7 +134,7 @@ def ios_build_options(api_key: nil)
     scheme:          "JunoNative",
     configuration:   IOS_BUILD_CONFIGURATION,
     export_method:   "app-store",
-    destination:     "generic/platform=iOS",
+    destination:     IOS_BUILD_DESTINATION,
     output_directory: IOS_OUTPUT_DIR,
     output_name:     ENV.fetch("IOS_OUTPUT_NAME", "JunoNative.ipa")
   }
@@ -201,25 +201,7 @@ platform :ios do
 
     api_key = app_store_api_key_hash
 
-    ios_paths = resolve_ios_project_paths
-
-    build_app_options = {
-      scheme: "JunoNative",
-      configuration: IOS_BUILD_CONFIGURATION,
-      export_method: "app-store",
-      destination: "generic/platform=iOS",
-      output_directory: IOS_OUTPUT_DIR,
-      output_name: ENV.fetch("IOS_OUTPUT_NAME", "JunoNative.ipa"),
-      api_key: api_key
-    }
-
-    if ios_paths[:type] == :workspace
-      build_app_options[:workspace] = ios_paths[:path]
-    else
-      build_app_options[:project] = ios_paths[:path]
-    end
-
-    build_app(build_app_options)
+    build_app(ios_build_options(api_key: api_key))
 
     upload_to_testflight(
       api_key: api_key,
