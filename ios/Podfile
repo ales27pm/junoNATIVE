@@ -2,9 +2,6 @@ platform :ios, '13.0'
 
 source 'https://github.com/CocoaPods/Specs.git'
 
-require 'json'
-require 'open3'
-
 root_path = File.expand_path('..', __dir__)
 node_modules_path = File.expand_path('../node_modules', __dir__)
 
@@ -45,7 +42,7 @@ target 'JunoNative' do
   config = use_native_modules!([
     'node',
     '-e',
-    "process.chdir('#{root_path}');process.argv=['','', 'config'];require('#{cli_entrypoint}').run()"
+    "process.chdir('#{root_path}');process.argv=['','', 'config'];require('#{cli_entrypoint}').run()",
   ])
 
   use_react_native!(
