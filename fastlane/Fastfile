@@ -93,7 +93,7 @@ platform :ios do
     FileUtils.mkdir_p(IOS_OUTPUT_DIR)
 
     compile_cpp_engine
-    sh("bash scripts/compile-turbo-modules.sh")
+    sh("bash #{File.join(ROOT_DIR, 'scripts/compile-turbo-modules.sh')}")
     compile_swift_sources
 
     build_app(
@@ -112,7 +112,7 @@ platform :ios do
     FileUtils.mkdir_p(IOS_OUTPUT_DIR)
 
     compile_cpp_engine
-    sh("bash scripts/compile-turbo-modules.sh")
+    sh("bash #{File.join(ROOT_DIR, 'scripts/compile-turbo-modules.sh')}")
     compile_swift_sources
 
     api_key = app_store_connect_api_key(
@@ -143,7 +143,7 @@ platform :android do
     FileUtils.mkdir_p(ANDROID_OUTPUT_DIR)
 
     compile_cpp_engine
-    sh("bash scripts/compile-turbo-modules.sh")
+    sh("bash #{File.join(ROOT_DIR, 'scripts/compile-turbo-modules.sh')}")
 
     build_type = options[:build_type] || ENV.fetch("ANDROID_BUILD_TYPE", "Release")
 

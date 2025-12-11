@@ -45,5 +45,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: JunoNative-iOS-sim-lib
-          path: ${{ env.DERIVED_DATA }}/Build/Products/Debug-iphonesimulator/libJunoNative.a
+          path: ${{ env.DERIVED_DATA }}/Build/Products/**/libJunoNative.a
           if-no-files-found: error
