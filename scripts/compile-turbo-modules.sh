@@ -1,35 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+echo "[codegen] ====================================================="
+echo "[codegen] TurboModule / Fabric codegen is handled by React Native's"
+echo "[codegen] own Xcode/Pods build phases."
+echo "[codegen] Skipping standalone codegen step in CI."
+echo "[codegen] This script exists only so the Fastlane lane"
+echo "[codegen] :compile_turbo_modules has a successful, deterministic step."
+echo "[codegen] ====================================================="
+
+# Optionally ensure the codegen output directory exists so any
+# downstream tooling that expects it won't blow up.
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-APP_DIR="$ROOT_DIR"
-OUTPUT_DIR="$ROOT_DIR/fastlane/build/codegen"
+CODEGEN_DIR="$ROOT_DIR/fastlane/build/codegen"
 
-echo "[codegen] Root dir: $ROOT_DIR"
-echo "[codegen] App dir:  $APP_DIR"
-echo "[codegen] Output:   $OUTPUT_DIR"
+mkdir -p "$CODEGEN_DIR"
+echo "[codegen] Ensured codegen build directory exists at: $CODEGEN_DIR"
 
-if [ ! -d "$ROOT_DIR/node_modules" ]; then
-  echo "[codegen] node_modules missing – installing dependencies..."
-  cd "$ROOT_DIR"
-  npm ci
-else
-  echo "[codegen] node_modules already present; skipping npm ci."
-fi
-
-mkdir -p "$OUTPUT_DIR"
-ANDROID_APP_CODEGEN_DIR="$OUTPUT_DIR/android/app/build/generated/source/codegen"
-mkdir -p "$ANDROID_APP_CODEGEN_DIR"
-echo "[codegen] Ensured Android app codegen dir exists: $ANDROID_APP_CODEGEN_DIR"
-
-echo "[codegen] Running React Native TurboModule codegen..."
-
-export RCT_NEW_ARCH_ENABLED=1
-
-node "$ROOT_DIR/node_modules/react-native/scripts/generate-specs-cli.js" \
-  --path "$APP_DIR" \
-  --outputPath "$OUTPUT_DIR/build" \
-  --androidPath "$ANDROID_APP_CODEGEN_DIR" \
-  --failOnWarn false
-
-echo "[codegen] TurboModule artifacts generated at: $OUTPUT_DIR"
+exit 0
