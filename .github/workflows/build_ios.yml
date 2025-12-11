@@ -41,9 +41,9 @@ jobs:
             -derivedDataPath "$DERIVED_DATA" \
             build
 
-      - name: Upload iOS simulator app
+      - name: Upload iOS simulator library
         uses: actions/upload-artifact@v4
         with:
-          name: JunoNative-iOS-sim-build
-          path: ${{ env.DERIVED_DATA }}/Build/Products/Debug-iphonesimulator/JunoNative.app
+          name: JunoNative-iOS-sim-lib
+          path: ${{ env.DERIVED_DATA }}/Build/Products/Debug-iphonesimulator/libJunoNative.a
           if-no-files-found: error
