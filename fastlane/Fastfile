@@ -76,7 +76,16 @@ platform :ios do
 
   desc "Compile React Native TurboModules (JSI/Native codegen)"
   lane :compile_turbo_modules do
-    sh("bash scripts/compile-turbo-modules.sh")
+    # Fastfile is in fastlane/, project root is one level up
+    project_root = File.expand_path("..", __dir__)
+    script_path  = File.join(project_root, "scripts", "compile-turbo-modules.sh")
+
+    unless File.exist?(script_path)
+      UI.user_error!("TurboModules script not found at #{script_path}")
+    end
+
+    UI.message("Running TurboModule codegen using #{script_path}")
+    sh("bash #{script_path}")
   end
 
   private_lane :prepare_build_assets do
