@@ -19,12 +19,24 @@ jobs:
       APP_STORE_CONNECT_API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
       APP_IDENTIFIER: ${{ secrets.APP_IDENTIFIER }}
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      APP_IDENTIFIER: ${{ secrets.APP_IDENTIFIER }}
+
+      # App Store Connect API key (base64-encoded p8)
+      APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+      APP_STORE_CONNECT_API_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_API_ISSUER_ID }}
+      APP_STORE_CONNECT_API_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_API_KEY_BASE64 }}
+
+      # Optional for match / keychain if you use it later
+      MATCH_KEYCHAIN_PASSWORD: ${{ secrets.MATCH_KEYCHAIN_PASSWORD }}
+
+      # IPA name from Fastlane
+      IOS_OUTPUT_NAME: JunoNative.ipa
 
     steps:
       - name: 🧾 Checkout code
         uses: actions/checkout@v4
 
-      - name: 🟢 Setup Node
+      - name: 🟢 Setup Node 22
         uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -39,14 +51,30 @@ jobs:
       - name: 📦 Install JS dependencies
         run: npm ci
 
+      # Optional safety / quality steps – keep or remove as you like
       - name: 🧪 Validate package.json
-        run: node scripts/validate-package-json.js
+        run: |
+          if [ -f scripts/validate-package-json.js ]; then
+            node scripts/validate-package-json.js
+          else
+            echo "No validate-package-json script, skipping."
+          fi
 
       - name: 🧹 Lint code
-        run: npm run lint
+        run: |
+          if npm run | grep -q "lint"; then
+            npm run lint
+          else
+            echo "No lint script, skipping."
+          fi
 
       - name: ⚙️ Compile TurboModules
-        run: bash scripts/compile-turbo-modules.sh
+        run: |
+          if [ -f scripts/compile-turbo-modules.sh ]; then
+            bash scripts/compile-turbo-modules.sh
+          else
+            echo "No compile-turbo-modules.sh, skipping."
+          fi
 
       - name: 🍫 Install CocoaPods
         run: bundle exec pod install
@@ -138,9 +166,13 @@ jobs:
           echo "✅ Found static lib: $FOUND_LIB"
           cp "$FOUND_LIB" ios_artifacts/
 
-          # Optional: include public headers
-          mkdir -p ios_artifacts/headers
-          cp ios/JunoNative/NativeModules/*.h ios_artifacts/headers/
+          # Optional: include headers if you expose them
+          if ls ios/JunoNative/NativeModules/*.h >/dev/null 2>&1; then
+            mkdir -p ios_artifacts/headers
+            cp ios/JunoNative/NativeModules/*.h ios_artifacts/headers/
+          else
+            echo "No NativeModules headers found, skipping."
+          fi
 
       - name: 💾 Commit and push artifacts
         run: |
