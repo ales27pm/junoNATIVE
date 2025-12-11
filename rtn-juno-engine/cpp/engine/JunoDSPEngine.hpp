@@ -10,7 +10,7 @@
 #include <TargetConditionals.h>
 #endif
 
-#if defined(__APPLE__) && TARGET_OS_IPHONE
+#if defined(__APPLE__) && defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE
 class JunoRenderEngine; // Forward declaration
 struct VoiceGPUParams;
 #endif
@@ -41,7 +41,7 @@ private:
     std::atomic<bool> running_{false};
     bool useGPU_     = false;
 
-#if defined(__APPLE__) && TARGET_OS_IPHONE
+#if defined(__APPLE__) && defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE
     std::unique_ptr<JunoRenderEngine> gpu_;
     std::unique_ptr<std::vector<VoiceGPUParams>> gpuVoiceCache_;
 #endif
