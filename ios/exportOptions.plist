@@ -9,7 +9,10 @@
   <key>signingStyle</key>
   <string>manual</string>
   <key>provisioningProfiles</key>
-  <dict></dict>
+  <dict>
+    <key>com.pulsr.junonative</key>
+    <string>match AppStore com.pulsr.junonative</string>
+  </dict>
   <key>uploadSymbols</key>
   <true/>
   <key>uploadBitcode</key>
