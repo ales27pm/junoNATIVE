@@ -1,0 +1,47 @@
+name: Verify App Store Connect & Signing Secrets
+
+on:
+  workflow_dispatch: {}  # manual trigger from the Actions tab
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/verify_appstore_connect.yml"
+      - "fastlane/**"
+
+jobs:
+  verify-asc-signing:
+    runs-on: macos-14
+
+    env:
+      # App / team identity
+      APPLE_ID:        ${{ secrets.APPLE_ID }}         # e.g. ios-team@pulsr.co.uk
+      APP_IDENTIFIER:  ${{ secrets.APP_IDENTIFIER }}   # e.g. com.pulsr.junonative
+      APPLE_TEAM_ID:   ${{ secrets.APPLE_TEAM_ID }}    # e.g. 123456789A
+
+      # ASC API key pieces
+      APP_STORE_CONNECT_API_KEY_ID:        ${{ secrets.APPLE_KEY_ID }}       # Key ID from ASC
+      APP_STORE_CONNECT_API_ISSUER_ID:     ${{ secrets.APPLE_ISSUER_ID }}    # Issuer ID from ASC
+      APP_STORE_CONNECT_API_KEY_BASE64:    ${{ secrets.APPLE_KEY_BASE64 }}   # base64 of .p8 file
+
+      # Distribution certificate (p12)
+      IOS_DIST_CERT_BASE64:   ${{ secrets.IOS_DIST_CERT_BASE64 }}           # base64 of your .p12
+      IOS_DIST_CERT_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}         # password used to export .p12
+
+    steps:
+      - name: 🧾 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 💎 Setup Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+          bundler-cache: true
+
+      - name: 📦 Install Ruby gems
+        run: |
+          bundle install --path vendor/bundle
+
+      - name: 🔍 Run Fastlane ASC + signing verification lane
+        run: |
+          bundle exec fastlane ios verify_appstore_connect
