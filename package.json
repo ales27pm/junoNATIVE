@@ -8,6 +8,7 @@
     "npm": ">=11.4.2"
   },
   "scripts": {
+    "ios-ci": "bundle exec fastlane ios ios_ci",
     "start": "react-native start",
     "ios": "react-native run-ios",
     "android": "react-native run-android",
