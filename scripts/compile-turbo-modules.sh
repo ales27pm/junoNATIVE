@@ -9,38 +9,27 @@ echo "[codegen] Root dir: $ROOT_DIR"
 echo "[codegen] App dir:  $APP_DIR"
 echo "[codegen] Output:   $OUTPUT_DIR"
 
-if [ ! -d "$APP_DIR/node_modules" ]; then
-  echo "[codegen] node_modules not found. Installing JavaScript dependencies..."
-  (cd "$ROOT_DIR" && npm ci)
+if [ ! -d "$ROOT_DIR/node_modules" ]; then
+  echo "[codegen] node_modules missing – installing dependencies..."
+  cd "$ROOT_DIR"
+  npm ci
 else
   echo "[codegen] node_modules already present; skipping npm ci."
 fi
 
-CODEGEN_SCRIPT="$APP_DIR/node_modules/react-native/scripts/generate-codegen-artifacts.js"
-
-if [ ! -f "$CODEGEN_SCRIPT" ]; then
-  echo "[codegen] React Native codegen script not found at:"
-  echo "          $CODEGEN_SCRIPT"
-  echo "          Did you install React Native dependencies?"
-  exit 1
-fi
-
 mkdir -p "$OUTPUT_DIR"
-
 ANDROID_APP_CODEGEN_DIR="$OUTPUT_DIR/android/app/build/generated/source/codegen"
-
-# Ensure the directory structure expected by React Native codegen exists. Recent
-# versions attempt to clean up generated artifacts and will `stat` the Android
-# path even when nothing was produced. Creating the path up front keeps the
-# cleanup step deterministic and prevents ENOENT failures in CI.
 mkdir -p "$ANDROID_APP_CODEGEN_DIR"
 echo "[codegen] Ensured Android app codegen dir exists: $ANDROID_APP_CODEGEN_DIR"
 
 echo "[codegen] Running React Native TurboModule codegen..."
-node "$CODEGEN_SCRIPT" \
-  -p "$ROOT_DIR" \
-  -t all \
-  -o "$OUTPUT_DIR" \
-  -s app
+
+export RCT_NEW_ARCH_ENABLED=1
+
+node "$ROOT_DIR/node_modules/react-native/scripts/generate-specs-cli.js" \
+  --path "$APP_DIR" \
+  --outputPath "$OUTPUT_DIR/build" \
+  --androidPath "$ANDROID_APP_CODEGEN_DIR" \
+  --failOnWarn false
 
 echo "[codegen] TurboModule artifacts generated at: $OUTPUT_DIR"
