@@ -16,7 +16,7 @@ IOS_SDK = ENV.fetch("IOS_SDK", "iphoneos")
 def resolve_ios_project_paths
   candidates = [
     { workspace: "ios/JunoNative.xcworkspace", project: "ios/JunoNative.xcodeproj" },
-    { workspace: "JunoNative.xcworkspace", project: "JunoNative.xcodeproj" }
+    { workspace: "JunoNative.xcworkspace", project: "JunoNative.xcodeproj" },
   ]
 
   candidates.each do |paths|
