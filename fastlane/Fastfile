@@ -4,13 +4,13 @@ default_platform(:ios)
 # Helper to construct App Store Connect API key hash from environment variables
 def app_store_api_key_hash
   api_key_id = ENV["APP_STORE_CONNECT_API_KEY_ID"]
-  issuer_id  = ENV["APP_STORE_CONNECT_API_KEY_ISSUER_ID"] || ENV["APP_STORE_CONNECT_API_ISSUER_ID"]
+  issuer_id  = ENV["APP_STORE_CONNECT_API_ISSUER_ID"]
   key_base64 = ENV["APP_STORE_CONNECT_API_KEY_BASE64"]
   raw_key    = ENV["APP_STORE_CONNECT_API_KEY"]
 
   # Validate required pieces
   if api_key_id.to_s.strip.empty? || issuer_id.to_s.strip.empty?
-    UI.user_error!("APP_STORE_CONNECT_API_KEY_ID and APP_STORE_CONNECT_API_KEY_ISSUER_ID (or APP_STORE_CONNECT_API_ISSUER_ID) must be set")
+    UI.user_error!("APP_STORE_CONNECT_API_KEY_ID and APP_STORE_CONNECT_API_ISSUER_ID must be set")
   end
 
   if key_base64.to_s.strip.empty? && raw_key.to_s.strip.empty?
@@ -184,13 +184,53 @@ platform :ios do
     install_cocoapods
     compile_swift_sources
 
+    require "base64"
+    require "tempfile"
+    dist_cert_base64 = ENV["IOS_DIST_CERT_BASE64"]
+    UI.user_error!("IOS_DIST_CERT_BASE64 must be set") if dist_cert_base64.to_s.strip.empty?
+
+    %w[APPLE_ID IOS_DIST_CERT_PASSWORD APP_APPLE_ID].each do |var|
+      if ENV[var].to_s.strip.empty?
+        UI.user_error!("Environment variable #{var} must be set and non-empty")
+      end
+    end
+
+    {
+      "APP_IDENTIFIER" => "export APP_IDENTIFIER='com.example.app'",
+      "APPLE_TEAM_ID" => "export APPLE_TEAM_ID='YOURTEAMID'",
+      "APP_APPLE_ID" => "export APP_APPLE_ID='1234567890' # numeric Apple App ID"
+    }.each do |var, example|
+      if ENV[var].to_s.strip.empty?
+        UI.user_error!("Environment variable #{var} must be set before building. Set it via CI secrets or locally using #{example}.")
+      end
+    end
+
+    UI.message("Importing distribution certificate from IOS_DIST_CERT_BASE64")
+    dist_p12 = Base64.decode64(dist_cert_base64)
+    Tempfile.create(["dist", ".p12"]) do |temp_p12|
+      temp_p12.binmode
+      temp_p12.write(dist_p12)
+      temp_p12.flush
+
+      import_certificate(
+        certificate_path:     temp_p12.path,
+        certificate_password: ENV["IOS_DIST_CERT_PASSWORD"]
+      )
+    end
+
     api_key    = app_store_api_key_hash
-    build_opts = ios_build_options
+    build_opts = ios_build_options.merge(
+      app_identifier: ENV["APP_IDENTIFIER"],
+      export_team_id: ENV["APPLE_TEAM_ID"]
+    )
 
     build_app(build_opts)
 
     upload_to_testflight(
       api_key:                           api_key,
+      app_identifier:                    ENV["APP_IDENTIFIER"],
+      team_id:                           ENV["APPLE_TEAM_ID"],
+      apple_id:                          ENV["APP_APPLE_ID"],
       skip_waiting_for_build_processing: false,
       distribute_external:               false,
       beta_app_review_info: {
