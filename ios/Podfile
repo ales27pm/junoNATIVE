@@ -67,7 +67,9 @@ if File.exist?(react_native_pods)
       File.join(community_cli_path, 'build', 'index.js'),
       File.join(community_cli_path, 'build', 'index.cjs'),
       File.join(community_cli_path, 'build', 'index.mjs'),
-    ].find { |candidate| File.exist?(candidate) }
+    ].find do |candidate|
+      File.exist?(candidate)
+    end
 
     unless cli_entrypoint
       Pod::UI.puts "React Native CLI entrypoint not found under #{community_cli_path}; reinstall dev dependency @react-native-community/cli (e.g., via `yarn add -D @react-native-community/cli` in Juno-Native) before running pod install."

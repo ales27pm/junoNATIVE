@@ -21,7 +21,8 @@ jobs:
           node-version: 22
 
       - name: Install JS deps
-        run: npm ci --prefix Juno-Native
+        working-directory: Juno-Native
+        run: npm ci
       - name: Install CocoaPods
         working-directory: ios
         run: pod install --repo-update
