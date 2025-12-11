@@ -189,13 +189,17 @@ platform :ios do
     dist_cert_base64 = ENV["IOS_DIST_CERT_BASE64"]
     UI.user_error!("IOS_DIST_CERT_BASE64 must be set") if dist_cert_base64.to_s.strip.empty?
 
-    %w[APPLE_ID IOS_DIST_CERT_PASSWORD].each do |var|
+    %w[APPLE_ID IOS_DIST_CERT_PASSWORD APP_APPLE_ID].each do |var|
       if ENV[var].to_s.strip.empty?
         UI.user_error!("Environment variable #{var} must be set and non-empty")
       end
     end
 
-    { "APP_IDENTIFIER" => "export APP_IDENTIFIER='com.example.app'", "APPLE_TEAM_ID" => "export APPLE_TEAM_ID='YOURTEAMID'" }.each do |var, example|
+    {
+      "APP_IDENTIFIER" => "export APP_IDENTIFIER='com.example.app'",
+      "APPLE_TEAM_ID" => "export APPLE_TEAM_ID='YOURTEAMID'",
+      "APP_APPLE_ID" => "export APP_APPLE_ID='1234567890' # numeric Apple App ID"
+    }.each do |var, example|
       if ENV[var].to_s.strip.empty?
         UI.user_error!("Environment variable #{var} must be set before building. Set it via CI secrets or locally using #{example}.")
       end
@@ -226,7 +230,7 @@ platform :ios do
       api_key:                           api_key,
       app_identifier:                    ENV["APP_IDENTIFIER"],
       team_id:                           ENV["APPLE_TEAM_ID"],
-      apple_id:                          ENV["APPLE_ID"],
+      apple_id:                          ENV["APP_APPLE_ID"],
       skip_waiting_for_build_processing: false,
       distribute_external:               false,
       beta_app_review_info: {
