@@ -4,13 +4,13 @@ default_platform(:ios)
 # Helper to construct App Store Connect API key hash from environment variables
 def app_store_api_key_hash
   api_key_id = ENV["APP_STORE_CONNECT_API_KEY_ID"]
-  issuer_id  = ENV["APP_STORE_CONNECT_API_KEY_ISSUER_ID"] || ENV["APP_STORE_CONNECT_API_ISSUER_ID"]
+  issuer_id  = ENV["APP_STORE_CONNECT_API_ISSUER_ID"]
   key_base64 = ENV["APP_STORE_CONNECT_API_KEY_BASE64"]
   raw_key    = ENV["APP_STORE_CONNECT_API_KEY"]
 
   # Validate required pieces
   if api_key_id.to_s.strip.empty? || issuer_id.to_s.strip.empty?
-    UI.user_error!("APP_STORE_CONNECT_API_KEY_ID and APP_STORE_CONNECT_API_KEY_ISSUER_ID (or APP_STORE_CONNECT_API_ISSUER_ID) must be set")
+    UI.user_error!("APP_STORE_CONNECT_API_KEY_ID and APP_STORE_CONNECT_API_ISSUER_ID must be set")
   end
 
   if key_base64.to_s.strip.empty? && raw_key.to_s.strip.empty?
