@@ -70,7 +70,7 @@ def ios_build_options
     plist_export_options["teamID"] = ENV["APPLE_TEAM_ID"]
   end
 
-  profile_name  = ENV["IOS_PROVISIONING_PROFILE_NAME"]
+  profile_name   = ENV["IOS_PROVISIONING_PROFILE_NAME"]
   app_identifier = ENV["APP_IDENTIFIER"]
 
   if profile_name.to_s.strip.empty?
@@ -207,6 +207,123 @@ platform :ios do
     build_app(ios_build_options)
   end
 
+  #
+  # 🔍 Full verification lane: API key + p12 + provisioning profile
+  #
+  desc "Verify App Store Connect credentials, p12, and provisioning profile (no build)"
+  lane :verify_appstore_connect do
+    UI.header("🔍 Verifying App Store Connect credentials & signing chain")
+
+    # 1) Check the env vars we expect for ASC
+    required_env_with_examples = {
+      "APPLE_ID"                         => "ios-team@pulsr.co.uk",
+      "APP_IDENTIFIER"                   => "com.pulsr.junonative",
+      "APPLE_TEAM_ID"                    => "YOUR_TEAM_ID",
+      "APP_STORE_CONNECT_API_KEY_ID"     => "ASC key id (e.g. ABC123XYZ)",
+      "APP_STORE_CONNECT_API_ISSUER_ID"  => "ASC issuer id (UUID)",
+      "APP_STORE_CONNECT_API_KEY_BASE64" => "base64-encoded .p8 contents"
+    }
+
+    missing = required_env_with_examples.keys.select { |k| ENV[k].to_s.strip.empty? }
+    unless missing.empty?
+      UI.user_error!("Missing required env vars for ASC verification: #{missing.join(', ')}")
+    end
+
+    UI.message("APPLE_ID: #{ENV['APPLE_ID']}")
+    UI.message("APP_IDENTIFIER: #{ENV['APP_IDENTIFIER']}")
+    UI.message("APPLE_TEAM_ID: #{ENV['APPLE_TEAM_ID']}")
+
+    # 2) Build API key hash and show safe summaries
+    api_key = app_store_api_key_hash
+    UI.message("API key ID: #{api_key[:key_id]}")
+    issuer = api_key[:issuer_id].to_s
+    UI.message("Issuer ID prefix: #{issuer[0, 8]}******** (masked)")
+
+    # 3) Try a real connection to App Store Connect using Spaceship
+    require "spaceship"
+
+    UI.message("Creating App Store Connect token…")
+    token = Spaceship::ConnectAPI::Token.create(api_key)
+    Spaceship::ConnectAPI.token = token
+
+    UI.message("Fetching apps from App Store Connect…")
+    apps = Spaceship::ConnectAPI::App.all
+
+    UI.success("✅ Successfully authenticated to App Store Connect. Found #{apps.size} apps total.")
+
+    bundle_id = ENV["APP_IDENTIFIER"]
+    if bundle_id.to_s.strip.empty?
+      UI.important("APP_IDENTIFIER not set, skipping bundle-id lookup.")
+    else
+      app = apps.find { |a| a.bundle_id == bundle_id }
+      if app
+        UI.success("✅ Found app with bundle id #{bundle_id}, name: #{app.name}")
+      else
+        UI.important("⚠️ Auth OK, but no app found with bundle id #{bundle_id}. " \
+                     "Create it in App Store Connect or double-check APP_IDENTIFIER.")
+      end
+    end
+
+    # 4) Verify p12 secrets (distribution certificate)
+    UI.header("🔐 Verifying distribution certificate (p12) secrets")
+
+    if ENV["IOS_DIST_CERT_BASE64"].to_s.strip.empty? || ENV["IOS_DIST_CERT_PASSWORD"].to_s.strip.empty?
+      UI.user_error!("IOS_DIST_CERT_BASE64 and IOS_DIST_CERT_PASSWORD must be set to verify the p12")
+    end
+
+    require "base64"
+    require "tempfile"
+
+    decoded_p12 = nil
+    begin
+      decoded_p12 = Base64.decode64(ENV["IOS_DIST_CERT_BASE64"])
+      if decoded_p12.nil? || decoded_p12.empty?
+        UI.user_error!("Decoded IOS_DIST_CERT_BASE64 is empty – check your base64 export")
+      end
+      UI.message("Decoded IOS_DIST_CERT_BASE64 (#{decoded_p12.bytesize} bytes)")
+    rescue => e
+      UI.user_error!("Failed to base64-decode IOS_DIST_CERT_BASE64: #{e}")
+    end
+
+    Tempfile.create(["dist", ".p12"]) do |temp_p12|
+      temp_p12.binmode
+      temp_p12.write(decoded_p12)
+      temp_p12.flush
+
+      UI.message("Checking p12 password using openssl…")
+
+      # If password is wrong or file is invalid, openssl will return non-zero and Fastlane will fail this lane
+      begin
+        sh("openssl pkcs12 -in '#{temp_p12.path}' -nokeys -passin pass:#{ENV['IOS_DIST_CERT_PASSWORD']} -info >/dev/null 2>&1")
+        UI.success("✅ p12 file is valid and the password works.")
+      rescue => e
+        UI.user_error!("❌ Failed to open p12 with provided password. Check IOS_DIST_CERT_BASE64 and IOS_DIST_CERT_PASSWORD. Error: #{e}")
+      end
+    end
+
+    # 5) Ask Apple for a provisioning profile via sigh using the same API key + bundle id
+    UI.header("🧾 Verifying provisioning profile generation via sigh")
+
+    profile_path = sigh(
+      app_identifier: ENV["APP_IDENTIFIER"],
+      api_key:        api_key,
+      adhoc:          false,
+      readonly:       false,  # allow creation if missing
+      skip_install:   true    # don't modify local Xcode project, just fetch/create
+    )
+
+    profile_name = Actions.lane_context[SharedValues::SIGH_PROFILE_NAME]
+    profile_name ||= File.basename(profile_path, ".mobileprovision") unless profile_path.to_s.strip.empty?
+
+    if profile_name.to_s.strip.empty?
+      UI.user_error!("sigh did not return a provisioning profile. " \
+                     "Ensure the ASC API credentials, team, and bundle identifier are correct.")
+    end
+
+    UI.success("✅ Provisioning profile acquired via sigh: #{profile_name}")
+    UI.success("🎉 ASC + p12 + provisioning profile verification completed successfully.")
+  end
+
   desc "CI lane: build iOS app and upload to TestFlight using App Store Connect API key"
   lane :ios_ci do
     UI.message("Starting iOS CI lane…")
@@ -253,9 +370,9 @@ platform :ios do
     UI.message("Requesting App Store provisioning profile via sigh")
     profile_path = sigh(
       app_identifier: ENV["APP_IDENTIFIER"],
-      api_key:        api_key,   # <- proper Hash, fixes `'api_key' value must be a Hash` issue  [oai_citation:0‡GitHub](https://github.com/fastlane/fastlane/issues/18324?utm_source=chatgpt.com)
+      api_key:        api_key,
       adhoc:          false,
-      readonly:       false      # <- this fixes your last 'readonly' error
+      readonly:       false
     )
 
     profile_name = Actions.lane_context[SharedValues::SIGH_PROFILE_NAME]
@@ -287,20 +404,20 @@ platform :ios do
     apple_app_id = ENV["APP_APPLE_ID"].to_s.strip
 
     upload_to_testflight(
-      api_key:      api_key,
+      api_key:        api_key,
       app_identifier: ENV["APP_IDENTIFIER"],
       team_id:        ENV["APPLE_TEAM_ID"],
       apple_id:       apple_app_id.empty? ? nil : apple_app_id,
       skip_waiting_for_build_processing: false,
       distribute_external:              false,
       beta_app_review_info: {
-        contact_email:       ENV["APPLE_ID"],
-        contact_first_name:  "Alexis",
-        contact_last_name:   "Boulet",
-        contact_phone:       "",
-        demo_account_name:   "",
+        contact_email:         ENV["APPLE_ID"],
+        contact_first_name:    "Alexis",
+        contact_last_name:     "Boulet",
+        contact_phone:         "",
+        demo_account_name:     "",
         demo_account_password: "",
-        notes:               "JunoNative CI build"
+        notes:                 "JunoNative CI build"
       }
     )
   end
