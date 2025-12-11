@@ -6,7 +6,7 @@ default_platform(:ios)
 # Helper to construct App Store Connect API key hash from environment variables
 def app_store_api_key_hash
   api_key_id = ENV["APP_STORE_CONNECT_API_KEY_ID"]
-  issuer_id  = ENV["APP_STORE_CONNECT_API_KEY_ISSUER_ID"] || ENV["APP_STORE_CONNECT_API_ISSUER_ID"]
+  issuer_id  = ENV["APP_STORE_CONNECT_API_ISSUER_ID"] || ENV["APP_STORE_CONNECT_API_KEY_ISSUER_ID"]
   key_base64 = ENV["APP_STORE_CONNECT_API_KEY_BASE64"]
   raw_key    = ENV["APP_STORE_CONNECT_API_KEY"]
 
@@ -214,9 +214,10 @@ platform :ios do
       "IOS_DIST_CERT_BASE64" => "export IOS_DIST_CERT_BASE64='<base64-encoded p12>'",
       "IOS_DIST_CERT_PASSWORD" => "export IOS_DIST_CERT_PASSWORD='your_p12_password'",
       "APPLE_ID" => "export APPLE_ID='developer@example.com'",
-      "APP_APPLE_ID" => "export APP_APPLE_ID='1234567890' # numeric Apple App ID",
       "APP_IDENTIFIER" => "export APP_IDENTIFIER='com.example.app'",
-      "APPLE_TEAM_ID" => "export APPLE_TEAM_ID='YOURTEAMID'"
+      "APPLE_TEAM_ID" => "export APPLE_TEAM_ID='YOURTEAMID'",
+      "APP_STORE_CONNECT_API_KEY_ID" => "export APP_STORE_CONNECT_API_KEY_ID='ABC123'",
+      "APP_STORE_CONNECT_API_ISSUER_ID" => "export APP_STORE_CONNECT_API_ISSUER_ID='YOUR-ISSUER-ID'"
     }
 
     required_env_with_examples.each do |var, example|
@@ -253,11 +254,13 @@ platform :ios do
 
     build_app(ios_build_options)
 
+    apple_app_id = ENV["APP_APPLE_ID"].to_s.strip
+
     upload_to_testflight(
       api_key:                           api_key,
       app_identifier:                    ENV["APP_IDENTIFIER"],
       team_id:                           ENV["APPLE_TEAM_ID"],
-      apple_id:                          ENV["APP_APPLE_ID"],
+      apple_id:                          apple_app_id.empty? ? nil : apple_app_id,
       skip_waiting_for_build_processing: false,
       distribute_external:               false,
       beta_app_review_info: {

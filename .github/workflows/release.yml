@@ -45,9 +45,10 @@ jobs:
       - name: iOS Release (Fastlane)
         run: fastlane ios release
         env:
-          APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APPLE_KEY_ID }}
-          APP_STORE_CONNECT_API_KEY_ISSUER_ID: ${{ secrets.APPLE_ISSUER_ID }}
-          APP_STORE_CONNECT_API_KEY: ${{ secrets.APPLE_KEY }}
+          APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          APP_STORE_CONNECT_API_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_API_ISSUER_ID }}
+          APP_STORE_CONNECT_API_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_API_KEY_BASE64 }}
+          APP_STORE_CONNECT_API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
 
       - name: Android Release (Fastlane)
         run: fastlane android release
