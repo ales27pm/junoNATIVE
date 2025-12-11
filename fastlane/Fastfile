@@ -3,11 +3,11 @@ require "plist"
 default_platform(:ios)
 
 ROOT_DIR = File.expand_path("..", __dir__)
-
 ENV["SPACESHIP_CONNECT_API_IN_HOUSE"] ||= "false"
 
+#
 # Helper to construct App Store Connect API key hash from environment variables
-# Helper to construct App Store Connect API key hash from environment variables
+#
 def app_store_api_key_hash
   api_key_id = ENV["APP_STORE_CONNECT_API_KEY_ID"]
   issuer_id  = ENV["APP_STORE_CONNECT_API_ISSUER_ID"] || ENV["APP_STORE_CONNECT_API_KEY_ISSUER_ID"]
@@ -39,7 +39,9 @@ def app_store_api_key_hash
   }
 end
 
+#
 # iOS build options shared between local + CI
+#
 def ios_build_options
   workspace_path = File.join(ROOT_DIR, "ios", "JunoNative.xcworkspace")
   project_path   = File.join(ROOT_DIR, "ios", "JunoNative.xcodeproj")
@@ -52,7 +54,8 @@ def ios_build_options
   elsif has_project
     UI.message("Using project at: #{project_path}")
   else
-    UI.user_error!("Neither #{workspace_path} nor #{project_path} exists. Check your repo structure and CocoaPods installation.")
+    UI.user_error!("Neither #{workspace_path} nor #{project_path} exists. " \
+                   "Check your repo structure and CocoaPods installation.")
   end
 
   export_options_plist = File.join(ROOT_DIR, "ios", "exportOptions.plist")
@@ -61,14 +64,17 @@ def ios_build_options
   end
 
   plist_export_options = Plist.parse_xml(export_options_plist) || {}
+
+  # Force team if provided
   unless ENV["APPLE_TEAM_ID"].to_s.strip.empty?
     plist_export_options["teamID"] = ENV["APPLE_TEAM_ID"]
   end
 
-  profile_name   = ENV["IOS_PROVISIONING_PROFILE_NAME"]
+  profile_name  = ENV["IOS_PROVISIONING_PROFILE_NAME"]
   app_identifier = ENV["APP_IDENTIFIER"]
 
   if profile_name.to_s.strip.empty?
+    # Let Xcode manage signing if we don't have a profile name yet
     plist_export_options["signingStyle"] = "automatic"
   elsif app_identifier.to_s.strip.empty?
     UI.user_error!("IOS_PROVISIONING_PROFILE_NAME was provided but APP_IDENTIFIER is missing")
@@ -79,30 +85,25 @@ def ios_build_options
   end
 
   {
-    workspace:        has_workspace ? workspace_path : nil,
-    project:          has_workspace ? nil : project_path,
-    scheme:           "JunoNative",
-    configuration:    "Release",
-    clean:            true,
-
-    output_directory: File.join(ROOT_DIR, "fastlane", "build", "ios"),
-    output_name:      ENV["IOS_OUTPUT_NAME"] || "JunoNative.ipa",
-
-    silent:           false,
-    skip_package_ipa: false,
-    skip_package_pkg: true,
-    include_symbols:  true,
-    include_bitcode:  false,
-
-    # 🔑 Use explicit exportOptions plist instead of export_method
-    export_options:   plist_export_options,
-
+    workspace:         has_workspace ? workspace_path : nil,
+    project:           has_workspace ? nil : project_path,
+    scheme:            "JunoNative",
+    configuration:     "Release",
+    clean:             true,
+    output_directory:  File.join(ROOT_DIR, "fastlane", "build", "ios"),
+    output_name:       ENV["IOS_OUTPUT_NAME"] || "JunoNative.ipa",
+    silent:            false,
+    skip_package_ipa:  false,
+    skip_package_pkg:  true,
+    include_symbols:   true,
+    include_bitcode:   false,
+    # Use explicit exportOptions plist instead of export_method
+    export_options:    plist_export_options,
     skip_profile_detection: false,
-    result_bundle:          true,
-    buildlog_path:         File.join(ROOT_DIR, "fastlane", "logs"),
-
+    result_bundle:     true,
+    buildlog_path:     File.join(ROOT_DIR, "fastlane", "logs"),
     # Help Xcode pick the right team in CI
-    export_xcargs: "DEVELOPMENT_TEAM=#{ENV['APPLE_TEAM_ID']}"
+    export_xcargs:     "DEVELOPMENT_TEAM=#{ENV['APPLE_TEAM_ID']}"
   }.compact
 end
 
@@ -138,10 +139,12 @@ platform :ios do
     sh("bash #{script_path}")
   end
 
-  # --- CocoaPods installation lane, correct path + working dir ---
+  #
+  # CocoaPods installation lane, correct path + working dir
+  #
   private_lane :install_cocoapods do
-    ios_dir = File.join(ROOT_DIR, "ios")
-    podfile = File.join(ios_dir, "Podfile")
+    ios_dir  = File.join(ROOT_DIR, "ios")
+    podfile  = File.join(ios_dir, "Podfile")
 
     unless File.exist?(podfile)
       UI.user_error!("Podfile not found at #{podfile}. Cannot run pod install.")
@@ -164,10 +167,7 @@ platform :ios do
     project_path   = File.join(ROOT_DIR, "ios", "JunoNative.xcodeproj")
 
     xcpretty_available = system("which xcpretty >/dev/null 2>&1")
-    formatter_suffix = xcpretty_available ? " | xcpretty --no-color" : ""
-
-    xcpretty_available = system("which xcpretty >/dev/null 2>&1")
-    formatter_suffix = xcpretty_available ? " | xcpretty --no-color" : ""
+    formatter_suffix   = xcpretty_available ? " | xcpretty --no-color" : ""
 
     if File.exist?(workspace_path)
       UI.message("Compiling Swift sources using workspace: #{workspace_path}")
@@ -194,7 +194,8 @@ platform :ios do
           build#{formatter_suffix}
       ])
     else
-      UI.user_error!("Neither #{workspace_path} nor #{project_path} exists. Check your repo structure and CocoaPods installation.")
+      UI.user_error!("Neither #{workspace_path} nor #{project_path} exists. " \
+                     "Check your repo structure and CocoaPods installation.")
     end
   end
 
@@ -203,7 +204,6 @@ platform :ios do
     prepare_build_assets
     install_cocoapods
     compile_swift_sources
-
     build_app(ios_build_options)
   end
 
@@ -217,26 +217,35 @@ platform :ios do
 
     require "base64"
     require "tempfile"
+
     api_key = app_store_api_key_hash
     ENV["SPACESHIP_CONNECT_API_IN_HOUSE"] ||= "false"
+
     required_env_with_examples = {
-      "IOS_DIST_CERT_BASE64" => "export IOS_DIST_CERT_BASE64='<base64-encoded p12>'",
-      "IOS_DIST_CERT_PASSWORD" => "export IOS_DIST_CERT_PASSWORD='your_p12_password'",
-      "APPLE_ID" => "export APPLE_ID='developer@example.com'",
-      "APP_IDENTIFIER" => "export APP_IDENTIFIER='com.example.app'",
-      "APPLE_TEAM_ID" => "export APPLE_TEAM_ID='YOURTEAMID'",
-      "APP_STORE_CONNECT_API_KEY_ID" => "export APP_STORE_CONNECT_API_KEY_ID='ABC123'"
+      "IOS_DIST_CERT_BASE64"          => "export IOS_DIST_CERT_BASE64='...'",
+      "IOS_DIST_CERT_PASSWORD"        => "export IOS_DIST_CERT_PASSWORD='your_p12_password'",
+      "APPLE_ID"                      => "export APPLE_ID='developer@example.com'",
+      "APP_IDENTIFIER"                => "export APP_IDENTIFIER='com.example.app'",
+      "APPLE_TEAM_ID"                 => "export APPLE_TEAM_ID='YOURTEAMID'",
+      "APP_STORE_CONNECT_API_KEY_ID"  => "export APP_STORE_CONNECT_API_KEY_ID='ABC123'"
     }
 
     required_env_with_examples.each do |var, example|
       if ENV[var].to_s.strip.empty?
-        UI.user_error!("Environment variable #{var} must be set before building. Set it via CI secrets or locally using #{example}.")
+        UI.user_error!("Environment variable #{var} must be set before building. " \
+                       "Set it via CI secrets or locally using: #{example}")
       end
     end
 
-    issuer_from_env = [ENV["APP_STORE_CONNECT_API_ISSUER_ID"], ENV["APP_STORE_CONNECT_API_KEY_ISSUER_ID"]]
+    issuer_from_env = [
+      ENV["APP_STORE_CONNECT_API_ISSUER_ID"],
+      ENV["APP_STORE_CONNECT_API_KEY_ISSUER_ID"]
+    ]
+
     if issuer_from_env.all? { |val| val.to_s.strip.empty? }
-      UI.user_error!("Either APP_STORE_CONNECT_API_ISSUER_ID or APP_STORE_CONNECT_API_KEY_ISSUER_ID must be set before building. Set one via CI secrets.")
+      UI.user_error!("Either APP_STORE_CONNECT_API_ISSUER_ID or " \
+                     "APP_STORE_CONNECT_API_KEY_ISSUER_ID must be set before building. " \
+                     "Set one via CI secrets.")
     end
 
     dist_cert_base64 = ENV["IOS_DIST_CERT_BASE64"]
@@ -244,19 +253,22 @@ platform :ios do
     UI.message("Requesting App Store provisioning profile via sigh")
     profile_path = sigh(
       app_identifier: ENV["APP_IDENTIFIER"],
-      api_key: api_key,
-      adhoc: false,
-      readonly: false
+      api_key:        api_key,   # <- proper Hash, fixes `'api_key' value must be a Hash` issue  [oai_citation:0‡GitHub](https://github.com/fastlane/fastlane/issues/18324?utm_source=chatgpt.com)
+      adhoc:          false,
+      readonly:       false      # <- this fixes your last 'readonly' error
     )
+
     profile_name = Actions.lane_context[SharedValues::SIGH_PROFILE_NAME]
     profile_name ||= File.basename(profile_path, ".mobileprovision") unless profile_path.to_s.strip.empty?
 
     if profile_name.to_s.strip.empty?
-      UI.user_error!("sigh did not return a provisioning profile. Ensure the App Store Connect API credentials and bundle identifier are correct.")
+      UI.user_error!("sigh did not return a provisioning profile. " \
+                     "Ensure the App Store Connect API credentials and bundle identifier are correct.")
     end
 
     UI.message("Importing distribution certificate from IOS_DIST_CERT_BASE64")
     dist_p12 = Base64.decode64(dist_cert_base64)
+
     Tempfile.create(["dist", ".p12"]) do |temp_p12|
       temp_p12.binmode
       temp_p12.write(dist_p12)
@@ -275,20 +287,20 @@ platform :ios do
     apple_app_id = ENV["APP_APPLE_ID"].to_s.strip
 
     upload_to_testflight(
-      api_key:                           api_key,
-      app_identifier:                    ENV["APP_IDENTIFIER"],
-      team_id:                           ENV["APPLE_TEAM_ID"],
-      apple_id:                          apple_app_id.empty? ? nil : apple_app_id,
+      api_key:      api_key,
+      app_identifier: ENV["APP_IDENTIFIER"],
+      team_id:        ENV["APPLE_TEAM_ID"],
+      apple_id:       apple_app_id.empty? ? nil : apple_app_id,
       skip_waiting_for_build_processing: false,
-      distribute_external:               false,
+      distribute_external:              false,
       beta_app_review_info: {
-        contact_email:         ENV["APPLE_ID"],
-        contact_first_name:    "Alexis",
-        contact_last_name:     "Boulet",
-        contact_phone:         "",
-        demo_account_name:     "",
+        contact_email:       ENV["APPLE_ID"],
+        contact_first_name:  "Alexis",
+        contact_last_name:   "Boulet",
+        contact_phone:       "",
+        demo_account_name:   "",
         demo_account_password: "",
-        notes:                 "JunoNative CI build"
+        notes:               "JunoNative CI build"
       }
     )
   end
