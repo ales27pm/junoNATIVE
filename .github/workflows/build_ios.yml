@@ -49,12 +49,16 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p artifact
-          found=$(find "$DERIVED_DATA/Build/Products" -name 'libJunoNative.a' -print -quit)
+          found=$(find "$DERIVED_DATA/Build/Products" \( -name 'libJunoNative.a' -o -name 'libPods-JunoNative.a' \) -print -quit || true)
+
           if [ -z "$found" ]; then
-            echo "libJunoNative.a not found under $DERIVED_DATA/Build/Products"
+            echo "Neither libJunoNative.a nor libPods-JunoNative.a found under $DERIVED_DATA/Build/Products"
+            echo "Contents of $DERIVED_DATA/Build/Products (if any):"
+            ls -R "$DERIVED_DATA/Build/Products" || echo "No Build/Products directory"
             exit 1
           fi
-          echo "Found libJunoNative.a at $found"
+
+          echo "Found iOS library at: $found"
           cp "$found" artifact/libJunoNative.a
 
       - name: Upload iOS simulator library
