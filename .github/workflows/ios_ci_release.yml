@@ -1,0 +1,98 @@
+name: iOS CI & Native Artifact Release
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "ios-v*"
+  workflow_dispatch:
+
+jobs:
+  build-and-release-ios:
+    runs-on: macos-14
+
+    env:
+      MATCH_KEYCHAIN_PASSWORD: ${{ secrets.MATCH_KEYCHAIN_PASSWORD }}
+      APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APPLE_KEY_ID }}
+      APP_STORE_CONNECT_API_KEY_ISSUER_ID: ${{ secrets.APPLE_ISSUER_ID }}
+      APP_STORE_CONNECT_API_KEY: ${{ secrets.APPLE_KEY }}
+      APP_IDENTIFIER: ${{ secrets.APP_IDENTIFIER }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+    steps:
+      - name: 🧾 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🟢 Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: 💎 Setup Ruby & Bundler
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.2'
+          bundler-cache: true
+
+      - name: 📦 Install JS dependencies
+        run: npm ci
+
+      - name: 🧪 Validate package.json
+        run: node scripts/validate-package-json.js
+
+      - name: 🧹 Lint code
+        run: npm run lint
+
+      - name: ⚙️ Compile TurboModules
+        run: bash scripts/compile-turbo-modules.sh
+
+      - name: 🍫 Install CocoaPods
+        run: bundle exec pod install
+        working-directory: ios
+
+      - name: 🛠️ Build iOS archive
+        run: |
+          xcodebuild archive \
+            -workspace ios/JunoNative.xcworkspace \
+            -scheme JunoNative \
+            -sdk iphoneos \
+            -configuration Release \
+            -archivePath $RUNNER_TEMP/JunoNative.xcarchive \
+            -allowProvisioningUpdates
+
+      - name: 📦 Export .ipa (optional for later use)
+        run: |
+          xcodebuild -exportArchive \
+            -archivePath $RUNNER_TEMP/JunoNative.xcarchive \
+            -exportPath $RUNNER_TEMP/output \
+            -exportOptionsPlist ios/exportOptions.plist
+
+      - name: 📂 Copy compiled native artifacts
+        run: |
+          set -euo pipefail
+          mkdir -p ios_artifacts
+
+          DERIVED_PATH="$HOME/Library/Developer/Xcode/DerivedData"
+          FOUND_LIB=$(find "$DERIVED_PATH" -name "libJunoNative.a" -print -quit)
+
+          if [ -z "$FOUND_LIB" ]; then
+            echo "❌ libJunoNative.a not found in DerivedData"
+            exit 1
+          fi
+
+          echo "✅ Found static lib: $FOUND_LIB"
+          cp "$FOUND_LIB" ios_artifacts/
+
+          # Optional: include public headers
+          mkdir -p ios_artifacts/headers
+          cp ios/JunoNative/NativeModules/*.h ios_artifacts/headers/
+
+      - name: 💾 Commit and push artifacts
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add ios_artifacts
+          git commit -m "Add compiled native iOS libs for Expo testing [skip ci]" || echo "No changes to commit"
+          git push
