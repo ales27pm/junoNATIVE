@@ -34,7 +34,7 @@ jobs:
         run: bundle exec pod install
 
       - name: Fastlane beta
-        working-directory: ios
+        working-directory: .
         env:
           APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
           APP_STORE_CONNECT_API_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_API_ISSUER_ID }}
