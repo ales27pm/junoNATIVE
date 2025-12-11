@@ -26,24 +26,12 @@ end
 require react_native_pods
 require cli_platform_ios
 
-def react_native_cli_entrypoint(node_modules_path)
-  candidate = File.join(node_modules_path, '@react-native-community', 'cli', 'build', 'bin.js')
-  return candidate if File.exist?(candidate)
-
-  raise Pod::Informative, "React Native CLI not found in node_modules at #{node_modules_path}. Run `npm ci` and retry."
-end
-
-cli_entrypoint = react_native_cli_entrypoint(node_modules_path)
-
 project 'JunoNative.xcodeproj'
 
 target 'JunoNative' do
   # Drive use_native_modules via the actual React Native CLI at the repo root.
-  config = use_native_modules!([
-    'node',
-    '-e',
-    "process.chdir('#{root_path}');process.argv=['','', 'config'];require('#{cli_entrypoint}').run()",
-  ])
+  # React Native 0.76’s autolinking expects no positional array argument here.
+  config = use_native_modules!
 
   use_react_native!(
     :path => config[:reactNativePath],
