@@ -2,12 +2,12 @@ default_platform(:ios)
 
 # Helper to construct App Store Connect API key hash from environment variables
 def app_store_api_key_hash
-  api_key_id = ENV["APP_STORE_CONNECT_API_KEY_ID"]
-  issuer_id  = ENV["APP_STORE_CONNECT_API_KEY_ISSUER_ID"]
-  key_base64 = ENV["APP_STORE_CONNECT_API_KEY_BASE64"]
+  api_key_id  = ENV["APP_STORE_CONNECT_API_KEY_ID"]
+  issuer_id   = ENV["APP_STORE_CONNECT_API_ISSUER_ID"]
+  key_base64  = ENV["APP_STORE_CONNECT_API_KEY_BASE64"]
 
   if api_key_id.to_s.empty? || issuer_id.to_s.empty? || key_base64.to_s.empty?
-    UI.user_error!("APP_STORE_CONNECT_API_KEY_ID, APP_STORE_CONNECT_API_KEY_ISSUER_ID, and APP_STORE_CONNECT_API_KEY_BASE64 must be set")
+    UI.user_error!("APP_STORE_CONNECT_API_KEY_ID, APP_STORE_CONNECT_API_ISSUER_ID, and APP_STORE_CONNECT_API_KEY_BASE64 must be set")
   end
 
   require "base64"
@@ -36,23 +36,36 @@ def ios_build_options
     UI.user_error!("Neither #{workspace_path} nor #{project_path} exists. Check your repo structure and CocoaPods installation.")
   end
 
+  export_options_plist = File.expand_path("../ios/exportOptions.plist", __dir__)
+  unless File.exist?(export_options_plist)
+    UI.user_error!("exportOptions.plist not found at #{export_options_plist}")
+  end
+
   {
-    workspace:            (has_workspace ? workspace_path : nil),
-    project:              (has_workspace ? nil : project_path),
-    scheme:               "JunoNative",
-    configuration:        "Release",
-    clean:                true,
-    output_directory:     File.expand_path("../fastlane/build/ios", __dir__),
-    output_name:          ENV["IOS_OUTPUT_NAME"] || "JunoNative.ipa",
-    silent:               false,
-    skip_package_ipa:     false,
-    skip_package_pkg:     true,
-    include_symbols:      true,
-    include_bitcode:      false,
-    export_method:        "app-store",
+    workspace:        has_workspace ? workspace_path : nil,
+    project:          has_workspace ? nil : project_path,
+    scheme:           "JunoNative",
+    configuration:    "Release",
+    clean:            true,
+
+    output_directory: File.expand_path("../fastlane/build/ios", __dir__),
+    output_name:      ENV["IOS_OUTPUT_NAME"] || "JunoNative.ipa",
+
+    silent:           false,
+    skip_package_ipa: false,
+    skip_package_pkg: true,
+    include_symbols:  true,
+    include_bitcode:  false,
+
+    # 🔑 Use explicit exportOptions.plist instead of export_method
+    export_options:   export_options_plist,
+
     skip_profile_detection: false,
-    result_bundle:        true,
-    buildlog_path:        File.expand_path("../fastlane/logs", __dir__)
+    result_bundle:          true,
+    buildlog_path:         File.expand_path("../fastlane/logs", __dir__),
+
+    # Help Xcode pick the right team in CI
+    export_xcargs: "DEVELOPMENT_TEAM=#{ENV['APPLE_TEAM_ID']}"
   }.compact
 end
 
@@ -66,6 +79,7 @@ platform :ios do
 
   desc "Compile the C++ DSP engine and run basic tests"
   lane :compile_dsp_engine do
+    # Fastfile lives in fastlane/, so the project root is one level up
     project_root = File.expand_path("..", __dir__)
     build_dir    = File.join(project_root, "fastlane", "build", "cmake")
 
@@ -75,6 +89,7 @@ platform :ios do
 
   desc "Compile React Native TurboModules (JSI/Native codegen)"
   lane :compile_turbo_modules do
+    # Fastfile is in fastlane/, project root is one level up
     project_root = File.expand_path("..", __dir__)
     script_path  = File.join(project_root, "scripts", "compile-turbo-modules.sh")
 
@@ -86,7 +101,7 @@ platform :ios do
     sh("bash #{script_path}")
   end
 
-  # --- NEW: CocoaPods installation lane, correct path + working dir ---
+  # --- CocoaPods installation lane, correct path + working dir ---
   private_lane :install_cocoapods do
     ios_dir = File.expand_path("../ios", __dir__)
     podfile = File.join(ios_dir, "Podfile")
@@ -143,8 +158,9 @@ platform :ios do
   desc "Local build for iOS (no upload)"
   lane :build do
     prepare_build_assets
-    install_cocoapods        # <- make sure Pods/ exist
+    install_cocoapods
     compile_swift_sources
+
     build_app(ios_build_options)
   end
 
@@ -153,7 +169,7 @@ platform :ios do
     UI.message("Starting iOS CI lane…")
 
     prepare_build_assets
-    install_cocoapods        # <- Pods-JunoNative.*.xcconfig will now exist
+    install_cocoapods
     compile_swift_sources
 
     api_key    = app_store_api_key_hash
