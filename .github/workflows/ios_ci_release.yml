@@ -26,7 +26,7 @@ jobs:
       # Optional for match / keychain if you use it later
       MATCH_KEYCHAIN_PASSWORD: ${{ secrets.MATCH_KEYCHAIN_PASSWORD }}
 
-      # IPA name from Fastlane
+      # IPA name used by Fastlane
       IOS_OUTPUT_NAME: JunoNative.ipa
 
     steps:
@@ -48,8 +48,7 @@ jobs:
       - name: 📦 Install JS dependencies
         run: npm ci
 
-      # Optional safety / quality steps – keep or remove as you like
-      - name: 🧪 Validate package.json
+      - name: 🧪 Validate package.json (optional)
         run: |
           if [ -f scripts/validate-package-json.js ]; then
             node scripts/validate-package-json.js
@@ -57,7 +56,7 @@ jobs:
             echo "No validate-package-json script, skipping."
           fi
 
-      - name: 🧹 Lint code
+      - name: 🧹 Lint code (optional)
         run: |
           if npm run | grep -q "lint"; then
             npm run lint
@@ -65,12 +64,12 @@ jobs:
             echo "No lint script, skipping."
           fi
 
-      - name: ⚙️ Compile TurboModules
+      - name: ⚙️ Compile TurboModules (optional but recommended)
         run: |
           if [ -f scripts/compile-turbo-modules.sh ]; then
             bash scripts/compile-turbo-modules.sh
           else
-            echo "No compile-turbo-modules.sh, skipping."
+            echo "No scripts/compile-turbo-modules.sh, skipping."
           fi
 
       - name: 🍫 Install CocoaPods
@@ -87,17 +86,24 @@ jobs:
           mkdir -p ios_artifacts
 
           DERIVED_PATH="$HOME/Library/Developer/Xcode/DerivedData"
+
+          # Try to find libJunoNative.a first
           FOUND_LIB=$(find "$DERIVED_PATH" -name "libJunoNative.a" -print -quit || true)
 
+          # Fallback: try libjuno_engine.a from the C++ core
           if [ -z "$FOUND_LIB" ]; then
-            echo "❌ libJunoNative.a not found in DerivedData"
+            FOUND_LIB=$(find "$DERIVED_PATH" -name "libjuno_engine.a" -print -quit || true)
+          fi
+
+          if [ -z "$FOUND_LIB" ]; then
+            echo "❌ No static library found (libJunoNative.a or libjuno_engine.a) in DerivedData"
             exit 1
           fi
 
           echo "✅ Found static lib: $FOUND_LIB"
           cp "$FOUND_LIB" ios_artifacts/
 
-          # Optional: include headers if you expose them
+          # Optional: include headers if they exist
           if ls ios/JunoNative/NativeModules/*.h >/dev/null 2>&1; then
             mkdir -p ios_artifacts/headers
             cp ios/JunoNative/NativeModules/*.h ios_artifacts/headers/
