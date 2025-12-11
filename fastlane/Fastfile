@@ -1,28 +1,40 @@
 require "fileutils"
 require "base64"
 
+# --- Paths & build configuration ---
+
 ROOT_DIR = File.expand_path("..", __dir__)
-IOS_OUTPUT_DIR = ENV.fetch("IOS_ARTIFACT_DIR", File.join(ROOT_DIR, "fastlane/build/ios"))
+
+IOS_OUTPUT_DIR = ENV.fetch(
+  "IOS_ARTIFACT_DIR",
+  File.join(ROOT_DIR, "fastlane/build/ios")
+)
+
 ANDROID_OUTPUT_DIR = ENV.fetch(
   "ANDROID_ARTIFACT_DIR",
-  File.join(ROOT_DIR, "rtn-juno-engine/android/app/build/outputs/fastlane")
+  File.join(ROOT_DIR, "android/app/build/outputs/fastlane")
 )
+
 ANDROID_BUNDLE_ROOT = ENV.fetch(
   "ANDROID_BUNDLE_OUTPUT_DIR",
-  File.join(ROOT_DIR, "rtn-juno-engine/android/app/build/outputs/bundle")
+  File.join(ROOT_DIR, "android/app/build/outputs/bundle")
 )
-ANDROID_BUNDLE_PATH = ENV["ANDROID_RELEASE_BUNDLE_PATH"]
-CMAKE_BUILD_DIR = ENV.fetch("CMAKE_BUILD_DIR", File.join(ROOT_DIR, "fastlane/build/cmake"))
+
+CMAKE_BUILD_DIR = ENV.fetch(
+  "CMAKE_BUILD_DIR",
+  File.join(ROOT_DIR, "fastlane/build/cmake")
+)
+
 CMAKE_CONFIGURATION = ENV.fetch("CMAKE_CONFIGURATION", "Release")
 IOS_BUILD_CONFIGURATION = ENV.fetch("IOS_BUILD_CONFIGURATION", "Release")
-IOS_BUILD_DESTINATION = ENV.fetch("IOS_BUILD_DESTINATION", "generic/platform=iOS Simulator")
-IOS_SDK = ENV.fetch("IOS_SDK", "iphonesimulator")
+IOS_BUILD_DESTINATION = ENV.fetch("IOS_BUILD_DESTINATION", "generic/platform=iOS")
+IOS_SDK = ENV.fetch("IOS_SDK", "iphoneos")
+
+# --- Helpers ---
 
 def resolve_android_bundle(build_type)
-  if ANDROID_BUNDLE_PATH
-    resolved_bundle_path = File.expand_path(ANDROID_BUNDLE_PATH, ROOT_DIR)
-    UI.user_error!("Explicit Android App Bundle not found at #{resolved_bundle_path}") unless File.exist?(resolved_bundle_path)
-    return resolved_bundle_path
+  if ANDROID_BUNDLE_ROOT.nil? || ANDROID_BUNDLE_ROOT.strip.empty?
+    UI.user_error!("ANDROID_BUNDLE_OUTPUT_DIR is not set")
   end
 
   normalized_build_type = build_type.to_s
@@ -74,7 +86,7 @@ def compile_cpp_engine
 end
 
 def compile_swift_sources
-  sh <<~CMD
+  sh(%Q[
     set -o pipefail && xcodebuild \
       -workspace ios/JunoNative.xcworkspace \
       -scheme JunoNative \
@@ -83,60 +95,60 @@ def compile_swift_sources
       -destination '#{IOS_BUILD_DESTINATION}' \
       CODE_SIGNING_ALLOWED=NO \
       build
-  CMD
+  ])
 end
 
-# Build a proper Hash for Fastlane's api_key parameter using a Base64-encoded p8 key
+# Build a proper Hash for Fastlane's api_key parameter using your base64 p8
 def app_store_api_key_hash
-  require "base64"
+  decoded_key = Base64.decode64(ENV.fetch("APP_STORE_CONNECT_API_KEY_BASE64"))
 
-  def app_store_api_key_hash
-    decoded_key = Base64.decode64(ENV.fetch("APP_STORE_CONNECT_API_KEY_BASE64"))
-
-    {
-      key_id:   ENV.fetch("APP_STORE_CONNECT_API_KEY_ID"),
-      issuer_id: ENV.fetch("APP_STORE_CONNECT_API_ISSUER_ID"),
-      key:      decoded_key,
-      in_house: false
-    }
-  end
-
+  {
+    key_id:   ENV.fetch("APP_STORE_CONNECT_API_KEY_ID"),
+    issuer_id: ENV.fetch("APP_STORE_CONNECT_API_ISSUER_ID"),
+    key:      decoded_key,
+    in_house: false
+  }
+end
 
 default_platform(:ios)
 
+# --- iOS lanes ---
+
 platform :ios do
-  desc "Build and upload to TestFlight"
+  desc "Manual iOS release: build and upload to TestFlight using Apple ID session"
   lane :release do
-    api_key = app_store_connect_api_key(
-      key_id: ENV["APP_STORE_CONNECT_API_KEY_ID"],
-      issuer_id: ENV["APP_STORE_CONNECT_API_ISSUER_ID"],
-      key_content: ENV["APP_STORE_CONNECT_API_KEY"]
+    FileUtils.mkdir_p(IOS_OUTPUT_DIR)
+
+    compile_cpp_engine
+    script_path = File.join(ROOT_DIR, "scripts/compile-turbo-modules.sh")
+    sh("bash #{script_path}") if File.exist?(script_path)
+    compile_swift_sources
+
+    build_app(
+      workspace: "ios/JunoNative.xcworkspace",
+      scheme: "JunoNative",
+      export_method: "app-store",
+      output_directory: IOS_OUTPUT_DIR,
+      output_name: ENV.fetch("IOS_OUTPUT_NAME", "JunoNative.ipa")
     )
 
-    testflight_options = {
-      api_key: api_key,
-      skip_waiting_for_build_processing: true
-    }
-
-    ipa_path = ENV["IPA_PATH"]
-    testflight_options[:ipa] = ipa_path if ipa_path && !ipa_path.empty?
-
-    upload_to_testflight(testflight_options)
+    upload_to_testflight
   end
 
-  desc "Build and upload iOS beta to TestFlight (App Store Connect API key, base64)"
+  desc "Beta: build and upload using App Store Connect API key (base64)"
   lane :beta do
     FileUtils.mkdir_p(IOS_OUTPUT_DIR)
 
     compile_cpp_engine
-    sh("bash #{File.join(ROOT_DIR, 'scripts/compile-turbo-modules.sh')}")
+    script_path = File.join(ROOT_DIR, "scripts/compile-turbo-modules.sh")
+    sh("bash #{script_path}") if File.exist?(script_path)
     compile_swift_sources
 
     api_key = app_store_api_key_hash
 
     build_app(
       workspace: "ios/JunoNative.xcworkspace",
-      scheme: "JunoNativeApp",
+      scheme: "JunoNative",
       configuration: IOS_BUILD_CONFIGURATION,
       export_method: "app-store",
       destination: "generic/platform=iOS",
@@ -151,12 +163,13 @@ platform :ios do
     )
   end
 
-  desc "CI lane: build and upload to TestFlight using App Store Connect API key (base64)"
+  desc "CI lane: used by GitHub Actions to build + upload to TestFlight (API key, base64)"
   lane :ios_ci do
     FileUtils.mkdir_p(IOS_OUTPUT_DIR)
 
     compile_cpp_engine
-    sh("bash #{File.join(ROOT_DIR, 'scripts/compile-turbo-modules.sh')}")
+    script_path = File.join(ROOT_DIR, "scripts/compile-turbo-modules.sh")
+    sh("bash #{script_path}") if File.exist?(script_path)
     compile_swift_sources
 
     api_key = app_store_api_key_hash
@@ -179,23 +192,26 @@ platform :ios do
   end
 end
 
+# --- Android lanes (kept for completeness; not used by current CI) ---
+
 platform :android do
   desc "Build and upload to Play Console internal track"
   lane :release do |options|
     FileUtils.mkdir_p(ANDROID_OUTPUT_DIR)
 
     compile_cpp_engine
-    sh("bash #{File.join(ROOT_DIR, 'scripts/compile-turbo-modules.sh')}")
+    script_path = File.join(ROOT_DIR, "scripts/compile-turbo-modules.sh")
+    sh("bash #{script_path}") if File.exist?(script_path)
 
     build_type = options[:build_type] || ENV.fetch("ANDROID_BUILD_TYPE", "Release")
 
-    gradlew_path = File.join(ROOT_DIR, "rtn-juno-engine/android/gradlew")
+    gradlew_path = File.join(ROOT_DIR, "android/gradlew")
     UI.user_error!("Gradle wrapper not found at #{gradlew_path}") unless File.exist?(gradlew_path)
 
     gradle(
       task: "bundle",
       build_type: build_type,
-      project_dir: "rtn-juno-engine/android"
+      project_dir: "android"
     )
 
     release_bundle = resolve_android_bundle(build_type)
@@ -206,6 +222,9 @@ platform :android do
     )
     FileUtils.cp(release_bundle, archived_bundle)
 
-    upload_to_play_store(track: "internal", aab: archived_bundle)
+    upload_to_play_store(
+      track: "internal",
+      aab: archived_bundle
+    )
   end
 end
