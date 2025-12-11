@@ -1,80 +1,49 @@
 name: iOS Build
 
-on: [push, pull_request]
+on:
+  push:
+  pull_request:
 
 jobs:
   ios:
-    runs-on: macos-15
+    runs-on: macos-14
+    env:
+      DERIVED_DATA: build
+    defaults:
+      run:
+        working-directory: .
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Select Xcode 16.1
-        uses: maxim-lobanov/setup-xcode@v1
-        with:
-          xcode-version: '16.1'
-
-      - name: Setup Node.js
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 22
 
       - name: Install JS deps
-        working-directory: Juno-Native
         run: |
-          # Ensure development dependencies (including the React Native CLI used by the Podfile)
-          # are available even if NODE_ENV is set to production by the runner environment.
           export NODE_ENV=development
           npm ci --include=dev
+
       - name: Install CocoaPods
         working-directory: ios
         run: pod install --repo-update
 
-      - name: Build iOS simulator app
-        env:
-          DERIVED_DATA: build
+      - name: Build iOS (simulator)
         run: |
           xcodebuild \
             -workspace ios/JunoNative.xcworkspace \
             -scheme JunoNative \
             -sdk iphonesimulator \
             -configuration Debug \
-            -destination 'platform=iOS Simulator,name=iPhone 15 Pro,OS=latest' \
             -derivedDataPath "$DERIVED_DATA" \
             build
-          echo "Derived data located at: $DERIVED_DATA"
-          ls -la "$DERIVED_DATA/Build/Products/Debug-iphonesimulator" || true
 
-      - name: Locate built products
-        id: locate_products
-        run: |
-          shopt -s nullglob
-          apps=(build/Build/Products/Debug-iphonesimulator/*.app build/Build/Products/*/*.app)
-          frameworks=(build/Build/Products/Debug-iphonesimulator/*.framework build/Build/Products/*/*.framework)
-          static_libs=(build/Build/Products/Debug-iphonesimulator/*.a build/Build/Products/*/*.a)
-
-          if [ ${#apps[@]} -eq 0 ]; then
-            echo "No .app bundles found; falling back to other build products (frameworks/static libs)" >&2
-          fi
-
-          artifacts=("${apps[@]}" "${frameworks[@]}" "${static_libs[@]}")
-
-          if [ ${#artifacts[@]} -eq 0 ]; then
-            echo "No .app, .framework, or static library artifacts found in build/Build/Products" >&2
-            echo "Available products:" >&2
-            find build/Build/Products -maxdepth 3 -type d -print 2>/dev/null || true
-            exit 1
-          fi
-
-          printf '%s\n' "Found build artifact(s):"
-          printf ' - %s\n' "${artifacts[@]}"
-
-          { printf 'artifacts<<EOF\n'; printf '%s\n' "${artifacts[@]}"; printf 'EOF\n'; } >> "$GITHUB_OUTPUT"
-
-      - name: Upload iOS simulator build
+      - name: Upload iOS simulator library
         uses: actions/upload-artifact@v4
         with:
-          name: JunoNative-iOS-sim-build
-          path: ${{ steps.locate_products.outputs.artifacts }}
+          name: JunoNative-iOS-sim-lib
+          path: ${{ env.DERIVED_DATA }}/Build/Products/Debug-iphonesimulator/libJunoNative.a
           if-no-files-found: error

@@ -1,12 +1,3 @@
-import { useEffect } from 'react';
-import { NativeEventEmitter, NativeModules, Platform } from 'react-native';
-
-type SynthEventHandlers = {
-  onParam?: (event: unknown) => void;
-  onPatch?: (event: unknown) => void;
-  onError?: (event: unknown) => void;
-};
-
 import { useEffect, useRef } from 'react';
 import { NativeEventEmitter, NativeModules, Platform } from 'react-native';
 
@@ -25,7 +16,9 @@ export default function useSynthEvents({ onParam, onPatch, onError }: SynthEvent
 
   useEffect(() => {
     const { RTNJunoEngine } = NativeModules as { RTNJunoEngine?: unknown };
-    if (!RTNJunoEngine || Platform.OS !== 'ios') return undefined;
+    if (!RTNJunoEngine || Platform.OS !== 'ios') {
+      return undefined;
+    }
 
     const emitter = new NativeEventEmitter(RTNJunoEngine as object);
     const subs = [

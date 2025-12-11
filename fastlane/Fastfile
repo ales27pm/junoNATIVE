@@ -102,7 +102,42 @@ platform :ios do
       export_method: "app-store",
       output_directory: IOS_OUTPUT_DIR,
       output_name: ENV.fetch("IOS_OUTPUT_NAME", "JunoNative.ipa")
+    )
+
     upload_to_testflight
+  end
+
+  desc "Build and upload iOS beta to TestFlight"
+  lane :beta do
+    FileUtils.mkdir_p(IOS_OUTPUT_DIR)
+
+    compile_cpp_engine
+    sh("bash scripts/compile-turbo-modules.sh")
+    compile_swift_sources
+
+    api_key = app_store_connect_api_key(
+      key_id: ENV.fetch("APP_STORE_CONNECT_API_KEY_ID"),
+      issuer_id: ENV.fetch("APP_STORE_CONNECT_API_ISSUER_ID"),
+      key_content: ENV.fetch("APP_STORE_CONNECT_API_KEY"),
+      is_key_content_base64: true
+    )
+
+    build_app(
+      workspace: "ios/JunoNative.xcworkspace",
+      scheme: "JunoNativeApp",
+      configuration: IOS_BUILD_CONFIGURATION,
+      export_method: "app-store",
+      destination: "generic/platform=iOS",
+      output_directory: IOS_OUTPUT_DIR,
+      output_name: ENV.fetch("IOS_OUTPUT_NAME", "JunoNative.ipa"),
+      api_key: api_key
+    )
+
+    upload_to_testflight(api_key: api_key)
+  end
+end
+
+platform :android do
   desc "Build and upload to Play Console internal track"
   lane :release do |options|
     FileUtils.mkdir_p(ANDROID_OUTPUT_DIR)

@@ -8,6 +8,9 @@ on:
 jobs:
   bench:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .
     strategy:
       matrix:
         sr: [44100, 48000, 96000]

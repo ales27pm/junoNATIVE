@@ -3,36 +3,40 @@ const path = require('path');
 
 const packageFiles = [
   path.join(__dirname, '..', 'package.json'),
-  path.join(__dirname, '..', 'Juno-Native', 'package.json'),
 ];
-
-const hasComment = (line) => /^\s*\/\//.test(line);
 
 let hasFailure = false;
 
-for (const filePath of packageFiles) {
-  const raw = fs.readFileSync(filePath, 'utf8');
-  const lines = raw.split(/\r?\n/);
-  const commentLines = lines
-    .map((line, index) => ({ line, index: index + 1 }))
-    .filter(({ line }) => hasComment(line));
-
-  if (commentLines.length > 0) {
-    console.error(
-      `Found line comments in ${path.relative(process.cwd(), filePath)} at lines: ${commentLines
-        .map(({ index }) => index)
-        .join(', ')}. Remove '//'-prefixed separators to keep JSON valid.`,
-    );
-    hasFailure = true;
-    continue;
-  }
-
+function validatePackage(filePath) {
+  const rel = path.relative(process.cwd(), filePath);
   try {
-    JSON.parse(raw);
-    console.log(`✔️  ${path.relative(process.cwd(), filePath)} is valid JSON.`);
-  } catch (error) {
-    console.error(`❌ ${path.relative(process.cwd(), filePath)} is not valid JSON: ${error.message}`);
+    const raw = fs.readFileSync(filePath, 'utf8');
+    const json = JSON.parse(raw);
+
+    if (!json.private) {
+      console.warn(`[validate-package-json] ${rel}: "private": true is recommended for app repos.`);
+    }
+
+    if (!json.name || typeof json.name !== 'string') {
+      console.error(`[validate-package-json] ${rel}: missing or invalid "name" field.`);
+      hasFailure = true;
+    }
+
+    if (!json.version || typeof json.version !== 'string') {
+      console.error(`[validate-package-json] ${rel}: missing or invalid "version" field.`);
+      hasFailure = true;
+    }
+  } catch (err) {
+    console.error(`[validate-package-json] Failed to parse ${rel}:`, err.message);
     hasFailure = true;
+  }
+}
+
+for (const file of packageFiles) {
+  if (fs.existsSync(file)) {
+    validatePackage(file);
+  } else {
+    console.warn(`[validate-package-json] Skipping missing package file: ${file}`);
   }
 }
 

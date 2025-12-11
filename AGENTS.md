@@ -1,27 +1,54 @@
 # Agent Guidelines
 
-These instructions apply to the entire repository.
+These instructions apply to automated agents and human contributors working on the JunoNative project.
 
-## Workflow
-- The primary app lives under `Juno-Native/`; top-level scripts proxy to that workspace.
-- Use the pinned toolchain (`node >= 18`) with **npm 11.4.2** from `packageManager`. To avoid mismatched node/npm pairings, prefer Node **22.x** (ships with npm 10+) and explicitly install npm 11.4.2 via the pinned package manager version. Keep node and npm aligned with the lockfile when scripting CI runners.
-- Favor TypeScript/ESM patterns already used in `Juno-Native`. Avoid introducing stubs or partially implemented flows.
+## Project layout overview
 
-## Required checks
-Run these from the **repo root** (the directory containing this file):
-- Lint: `npm --prefix Juno-Native run lint`
-- Formatting (apply): `npm --prefix Juno-Native run format`
-- Formatting (check): `npm --prefix Juno-Native run check:format`
-- Formatting: `npm --prefix Juno-Native run format` (or `npm --prefix Juno-Native run check:format` to verify without modifying files)
-- Package metadata validation: `npm run validate:packages`
+The current layout is:
 
-Run the relevant commands for any area you change. Document any skipped checks with a reason.
+- `App.tsx` / `index.js` – React Native entrypoint
+- `src/` – modern UI and control surface (keyboard, knobs, patch browser, etc.)
+- `rtn-juno-engine/` – C++ DSP core + iOS / Android bridges
+- `ios/` – iOS Xcode project and Pod configuration
+- `android/` – Android Gradle project
+- `tests/` – C++ DSP and integration tests
+- `.github/workflows/` – CI/CD configuration
+- `fastlane/` – deployment automation
 
-## Style and conventions
-- Keep JSON files free of line-comment separator banners (`// =====`); see `docs/comment-separators.md` for context.
-- Prefer Prettier defaults for JS/TS/JSON formatting. Avoid adding trailing debug logs.
-- When modifying documentation, place new repo-wide notes in `docs/` unless the change belongs next to the code.
+The primary React Native app now lives at the **repository root**.
+The legacy `Juno-Native/` workspace is deprecated and can be removed.
 
-## Documentation references
-- See `docs/codebase-overview.md` for a high-level map of client, synth engine, UI, audio, and server components.
-- Legacy JSON separator guidance lives in `docs/comment-separators.md`.
+## Agent responsibilities
+
+1. **Do not resurrect `Juno-Native/` paths**
+
+   - All tooling, scripts, and workflows must assume the React Native app is rooted at the repository root.
+   - Do not add `--prefix Juno-Native` or `Juno-Native/…` paths to new commands.
+
+2. **Use root-level npm commands**
+
+   - Install dependencies at the root:
+     - `npm ci`
+   - Lint:
+     - `npm run lint`
+   - Validate package files:
+     - `npm run validate:packages`
+
+3. **C++ DSP tests**
+
+   - Tests are driven via CMake:
+     - `cmake -S . -B build`
+     - `cmake --build build`
+     - `ctest --test-dir build --output-on-failure -C Debug`
+
+4. **Codegen**
+
+   - TurboModule / RN codegen is invoked via:
+     - `bash scripts/compile-turbo-modules.sh`
+
+5. **JSON / comment separators**
+
+   - Do not place decorative separator lines inside JSON files.
+   - Instead, see the guidance in `docs/comment-separators.md`.
+
+This is the canonical layout; any automated refactors should preserve it.
