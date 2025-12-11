@@ -189,9 +189,15 @@ platform :ios do
     dist_cert_base64 = ENV["IOS_DIST_CERT_BASE64"]
     UI.user_error!("IOS_DIST_CERT_BASE64 must be set") if dist_cert_base64.to_s.strip.empty?
 
-    %w[APP_IDENTIFIER APPLE_TEAM_ID APPLE_ID IOS_DIST_CERT_PASSWORD].each do |var|
+    %w[APPLE_ID IOS_DIST_CERT_PASSWORD].each do |var|
       if ENV[var].to_s.strip.empty?
         UI.user_error!("Environment variable #{var} must be set and non-empty")
+      end
+    end
+
+    { "APP_IDENTIFIER" => "export APP_IDENTIFIER='com.example.app'", "APPLE_TEAM_ID" => "export APPLE_TEAM_ID='YOURTEAMID'" }.each do |var, example|
+      if ENV[var].to_s.strip.empty?
+        UI.user_error!("Environment variable #{var} must be set before building. Set it via CI secrets or locally using #{example}.")
       end
     end
 
