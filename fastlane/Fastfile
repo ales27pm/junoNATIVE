@@ -166,6 +166,9 @@ platform :ios do
     xcpretty_available = system("which xcpretty >/dev/null 2>&1")
     formatter_suffix = xcpretty_available ? " | xcpretty --no-color" : ""
 
+    xcpretty_available = system("which xcpretty >/dev/null 2>&1")
+    formatter_suffix = xcpretty_available ? " | xcpretty --no-color" : ""
+
     if File.exist?(workspace_path)
       UI.message("Compiling Swift sources using workspace: #{workspace_path}")
       sh(%Q[
