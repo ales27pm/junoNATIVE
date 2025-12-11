@@ -3,11 +3,11 @@ default_platform(:ios)
 # Helper to construct App Store Connect API key hash from environment variables
 def app_store_api_key_hash
   api_key_id = ENV["APP_STORE_CONNECT_API_KEY_ID"]
-  issuer_id = ENV["APP_STORE_CONNECT_API_ISSUER_ID"]
+  issuer_id  = ENV["APP_STORE_CONNECT_API_KEY_ISSUER_ID"]
   key_base64 = ENV["APP_STORE_CONNECT_API_KEY_BASE64"]
 
   if api_key_id.to_s.empty? || issuer_id.to_s.empty? || key_base64.to_s.empty?
-    UI.user_error!("APP_STORE_CONNECT_API_KEY_ID, APP_STORE_CONNECT_API_ISSUER_ID, and APP_STORE_CONNECT_API_KEY_BASE64 must be set")
+    UI.user_error!("APP_STORE_CONNECT_API_KEY_ID, APP_STORE_CONNECT_API_KEY_ISSUER_ID, and APP_STORE_CONNECT_API_KEY_BASE64 must be set")
   end
 
   require "base64"
@@ -86,6 +86,22 @@ platform :ios do
     sh("bash #{script_path}")
   end
 
+  # --- NEW: CocoaPods installation lane, correct path + working dir ---
+  private_lane :install_cocoapods do
+    ios_dir = File.expand_path("../ios", __dir__)
+    podfile = File.join(ios_dir, "Podfile")
+
+    unless File.exist?(podfile)
+      UI.user_error!("Podfile not found at #{podfile}. Cannot run pod install.")
+    end
+
+    UI.message("Running CocoaPods install in #{ios_dir}")
+    Dir.chdir(ios_dir) do
+      # Using bundler because CI invokes `bundle exec fastlane`
+      sh("bundle exec pod install --repo-update")
+    end
+  end
+
   private_lane :prepare_build_assets do
     compile_dsp_engine
     compile_turbo_modules
@@ -96,6 +112,7 @@ platform :ios do
     project_path   = File.expand_path("../ios/JunoNative.xcodeproj", __dir__)
 
     if File.exist?(workspace_path)
+      UI.message("Compiling Swift sources using workspace: #{workspace_path}")
       sh(%Q[
         set -o pipefail && xcodebuild \
           -workspace "#{workspace_path}" \
@@ -107,6 +124,7 @@ platform :ios do
           build
       ])
     elsif File.exist?(project_path)
+      UI.message("Workspace not found; compiling Swift sources using project: #{project_path}")
       sh(%Q[
         set -o pipefail && xcodebuild \
           -project "#{project_path}" \
@@ -125,6 +143,7 @@ platform :ios do
   desc "Local build for iOS (no upload)"
   lane :build do
     prepare_build_assets
+    install_cocoapods        # <- make sure Pods/ exist
     compile_swift_sources
     build_app(ios_build_options)
   end
@@ -134,25 +153,26 @@ platform :ios do
     UI.message("Starting iOS CI lane…")
 
     prepare_build_assets
+    install_cocoapods        # <- Pods-JunoNative.*.xcconfig will now exist
     compile_swift_sources
 
-    api_key      = app_store_api_key_hash
-    build_opts   = ios_build_options
+    api_key    = app_store_api_key_hash
+    build_opts = ios_build_options
 
     build_app(build_opts)
 
     upload_to_testflight(
-      api_key:                              api_key,
-      skip_waiting_for_build_processing:    false,
-      distribute_external:                  false,
+      api_key:                           api_key,
+      skip_waiting_for_build_processing: false,
+      distribute_external:               false,
       beta_app_review_info: {
-        contact_email:       ENV["APPLE_ID"],
-        contact_first_name:  "Alexis",
-        contact_last_name:   "Boulet",
-        contact_phone:       "",
-        demo_account_name:   "",
+        contact_email:         ENV["APPLE_ID"],
+        contact_first_name:    "Alexis",
+        contact_last_name:     "Boulet",
+        contact_phone:         "",
+        demo_account_name:     "",
         demo_account_password: "",
-        notes:               "JunoNative CI build"
+        notes:                 "JunoNative CI build"
       }
     )
   end
