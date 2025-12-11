@@ -59,20 +59,60 @@ jobs:
 
       - name: 🛠️ Build iOS archive
         run: |
+          ARCHIVE_PATH="$RUNNER_TEMP/JunoNative.xcarchive"
+
           xcodebuild archive \
             -workspace ios/JunoNative.xcworkspace \
             -scheme JunoNative \
             -sdk iphoneos \
             -configuration Release \
-            -archivePath $RUNNER_TEMP/JunoNative.xcarchive \
+            -archivePath "$ARCHIVE_PATH" \
             -allowProvisioningUpdates
+
+          echo "ARCHIVE_PATH=$ARCHIVE_PATH" >> "$GITHUB_ENV"
 
       - name: 📦 Export .ipa (optional for later use)
         run: |
+          ARCHIVE_PATH="${ARCHIVE_PATH:-$RUNNER_TEMP/JunoNative.xcarchive}"
+          EXPORT_DIR="$RUNNER_TEMP/output"
+
           xcodebuild -exportArchive \
-            -archivePath $RUNNER_TEMP/JunoNative.xcarchive \
-            -exportPath $RUNNER_TEMP/output \
+            -archivePath "$ARCHIVE_PATH" \
+            -exportPath "$EXPORT_DIR" \
             -exportOptionsPlist ios/exportOptions.plist
+
+          echo "EXPORT_DIR=$EXPORT_DIR" >> "$GITHUB_ENV"
+
+      - name: 🔍 Capture exported artifact paths
+        run: |
+          set -euo pipefail
+
+          EXPORT_DIR="${EXPORT_DIR:-$RUNNER_TEMP/output}"
+
+          IPA_PATH=$(find "$EXPORT_DIR" -maxdepth 2 -type f -name "*.ipa" -print -quit)
+          if [ -n "$IPA_PATH" ]; then
+            echo "IPA_PATH=$IPA_PATH" >> "$GITHUB_ENV"
+            echo "Found IPA at $IPA_PATH"
+          else
+            echo "No IPA found in $EXPORT_DIR"
+          fi
+
+          DSYM_DIR=$(find "$EXPORT_DIR" -maxdepth 3 -type d -name "*.app.dSYM" -print -quit)
+          if [ -n "$DSYM_DIR" ]; then
+            echo "DSYM_DIR=$DSYM_DIR" >> "$GITHUB_ENV"
+            echo "Found dSYM at $DSYM_DIR"
+          else
+            echo "No dSYM found in $EXPORT_DIR"
+          fi
+
+          ARCHIVE_PATH="${ARCHIVE_PATH:-$(find "$RUNNER_TEMP" -maxdepth 2 -type d -name "*.xcarchive" -print -quit)}"
+          if [ -n "$ARCHIVE_PATH" ]; then
+            echo "ARCHIVE_PATH=$ARCHIVE_PATH" >> "$GITHUB_ENV"
+            echo "Using archive path $ARCHIVE_PATH"
+          else
+            echo "❌ Archive path not found"
+            exit 1
+          fi
 
       - name: 🚀 Upload to TestFlight
         run: bundle exec fastlane release
@@ -81,24 +121,14 @@ jobs:
           APP_STORE_CONNECT_API_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_API_ISSUER_ID }}
           APP_STORE_CONNECT_API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
 
-      - name: 📦 Zip dSYM
-        run: zip -r JunoNative.app.dSYM.zip "$RUNNER_TEMP/output/JunoNative.app.dSYM"
-
-      - name: ☁️ Upload dSYM to App Store
-        run: |
-          xcrun altool \
-            --upload-symbols \
-            -f JunoNative.app.dSYM.zip \
-            --type ios \
-            --apiKey ${{ secrets.APPLE_KEY_ID }} \
-            --apiIssuer ${{ secrets.APPLE_ISSUER_ID }}
-
       - name: 📂 Copy compiled native artifacts
         run: |
           set -euo pipefail
           mkdir -p ios_artifacts
 
-          FOUND_LIB=$(find "$RUNNER_TEMP/JunoNative.xcarchive" -name "libJunoNative.a" -print -quit)
+          ARCHIVE_PATH="${ARCHIVE_PATH:-$(find "$RUNNER_TEMP" -maxdepth 2 -type d -name "*.xcarchive" -print -quit)}"
+
+          FOUND_LIB=$(find "$ARCHIVE_PATH" -name "libJunoNative.a" -print -quit)
 
           if [ -z "$FOUND_LIB" ]; then
             echo "❌ libJunoNative.a not found in archive contents"
@@ -116,7 +146,12 @@ jobs:
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
-          git checkout -B ios-artifacts
+          git fetch origin ios-artifacts || true
+          if git show-ref --verify --quiet refs/remotes/origin/ios-artifacts; then
+            git checkout -B ios-artifacts origin/ios-artifacts
+          else
+            git checkout -B ios-artifacts
+          fi
           git add ios_artifacts
           git commit -m "Add compiled native iOS libs for Expo testing [skip ci]" || echo "No changes to commit"
-          git push origin ios-artifacts
+          git push --force-with-lease origin ios-artifacts

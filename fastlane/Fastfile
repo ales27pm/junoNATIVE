@@ -96,10 +96,15 @@ platform :ios do
       key_content: ENV["APP_STORE_CONNECT_API_KEY"]
     )
 
-    upload_to_testflight(
+    testflight_options = {
       api_key: api_key,
       skip_waiting_for_build_processing: true
-    )
+    }
+
+    ipa_path = ENV["IPA_PATH"]
+    testflight_options[:ipa] = ipa_path if ipa_path && !ipa_path.empty?
+
+    upload_to_testflight(testflight_options)
   end
 
   desc "Build and upload iOS beta to TestFlight"

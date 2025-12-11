@@ -7,6 +7,6 @@
     <key>uploadSymbols</key>
     <true/>
     <key>compileBitcode</key>
-    <true/>
+    <false/>
 </dict>
 </plist>
