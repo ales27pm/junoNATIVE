@@ -73,8 +73,15 @@ jobs:
           fi
 
       - name: 🍫 Install CocoaPods
-        run: bundle exec pod install
-        working-directory: ios
+        run: bundle exec pod install --project-directory=ios
+
+      - name: 🔎 Verify Xcode workspace exists
+        run: |
+          if [ ! -d ios/JunoNative.xcworkspace ] && [ ! -d ios/JunoNative.xcodeproj ]; then
+            echo "Workspace or project is missing after pod install"
+            ls -la ios
+            exit 1
+          fi
 
       - name: 🚀 Build & upload iOS app via Fastlane (ios_ci lane)
         run: |
