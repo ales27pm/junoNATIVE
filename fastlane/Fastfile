@@ -102,13 +102,7 @@ platform :ios do
       export_method: "app-store",
       output_directory: IOS_OUTPUT_DIR,
       output_name: ENV.fetch("IOS_OUTPUT_NAME", "JunoNative.ipa")
-    )
-
     upload_to_testflight
-  end
-end
-
-platform :android do
   desc "Build and upload to Play Console internal track"
   lane :release do |options|
     FileUtils.mkdir_p(ANDROID_OUTPUT_DIR)
