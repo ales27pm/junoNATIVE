@@ -222,14 +222,18 @@ platform :ios do
       "APPLE_ID" => "export APPLE_ID='developer@example.com'",
       "APP_IDENTIFIER" => "export APP_IDENTIFIER='com.example.app'",
       "APPLE_TEAM_ID" => "export APPLE_TEAM_ID='YOURTEAMID'",
-      "APP_STORE_CONNECT_API_KEY_ID" => "export APP_STORE_CONNECT_API_KEY_ID='ABC123'",
-      "APP_STORE_CONNECT_API_ISSUER_ID" => "export APP_STORE_CONNECT_API_ISSUER_ID='YOUR-ISSUER-ID'"
+      "APP_STORE_CONNECT_API_KEY_ID" => "export APP_STORE_CONNECT_API_KEY_ID='ABC123'"
     }
 
     required_env_with_examples.each do |var, example|
       if ENV[var].to_s.strip.empty?
         UI.user_error!("Environment variable #{var} must be set before building. Set it via CI secrets or locally using #{example}.")
       end
+    end
+
+    issuer_from_env = [ENV["APP_STORE_CONNECT_API_ISSUER_ID"], ENV["APP_STORE_CONNECT_API_KEY_ISSUER_ID"]]
+    if issuer_from_env.all? { |val| val.to_s.strip.empty? }
+      UI.user_error!("Either APP_STORE_CONNECT_API_ISSUER_ID or APP_STORE_CONNECT_API_KEY_ISSUER_ID must be set before building. Set one via CI secrets.")
     end
 
     dist_cert_base64 = ENV["IOS_DIST_CERT_BASE64"]
@@ -241,7 +245,12 @@ platform :ios do
       adhoc: false,
       readonly: true
     )
-    profile_name = Actions.lane_context[SharedValues::SIGH_PROFILE_NAME] || File.basename(profile_path.to_s, ".mobileprovision")
+    profile_name = Actions.lane_context[SharedValues::SIGH_PROFILE_NAME]
+    profile_name ||= File.basename(profile_path, ".mobileprovision") unless profile_path.to_s.strip.empty?
+
+    if profile_name.to_s.strip.empty?
+      UI.user_error!("sigh did not return a provisioning profile. Ensure the App Store Connect API credentials and bundle identifier are correct.")
+    end
 
     UI.message("Importing distribution certificate from IOS_DIST_CERT_BASE64")
     dist_p12 = Base64.decode64(dist_cert_base64)
