@@ -94,9 +94,9 @@ def compile_swift_sources
 
   xcode_target_flag =
     if ios_paths[:type] == :workspace
-      "-workspace #{ios_paths[:path]}"
+      "-workspace \"#{ios_paths[:path]}\""
     else
-      "-project #{ios_paths[:path]}"
+      "-project \"#{ios_paths[:path]}\""
     end
 
   sh <<~CMD
