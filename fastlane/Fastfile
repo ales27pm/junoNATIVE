@@ -3,7 +3,7 @@ default_platform(:ios)
 # Helper to construct App Store Connect API key hash from environment variables
 def app_store_api_key_hash
   api_key_id = ENV["APP_STORE_CONNECT_API_KEY_ID"]
-  issuer_id  = ENV["APP_STORE_CONNECT_API_KEY_ISSUER_ID"]
+  issuer_id = ENV["APP_STORE_CONNECT_API_ISSUER_ID"]
   key_base64 = ENV["APP_STORE_CONNECT_API_KEY_BASE64"]
 
   if api_key_id.to_s.empty? || issuer_id.to_s.empty? || key_base64.to_s.empty?
@@ -23,7 +23,7 @@ end
 # iOS build options shared between local + CI
 def ios_build_options
   workspace_path = File.expand_path("../ios/JunoNative.xcworkspace", __dir__)
-  project_path   = File.expand_path("../ios/JunoNative.xcodeproj", __dir__)
+  project_path   = File.expand_path("../ios/JunoNative.xcodeproj",   __dir__)
 
   has_workspace = File.exist?(workspace_path)
   has_project   = File.exist?(project_path)
@@ -31,35 +31,33 @@ def ios_build_options
   if has_workspace
     UI.message("Using workspace at: #{workspace_path}")
   elsif has_project
-    UI.message("Using project at: #{project_path}")
+    UI.message("Using project at:   #{project_path}")
   else
     UI.user_error!("Neither #{workspace_path} nor #{project_path} exists. Check your repo structure and CocoaPods installation.")
   end
 
   {
-    workspace: has_workspace ? workspace_path : nil,
-    project:   has_workspace ? nil : project_path,
-    scheme: "JunoNative",
-    configuration: "Release",
-    clean: true,
-    output_directory: File.expand_path("../fastlane/build/ios", __dir__),
-    output_name: ENV["IOS_OUTPUT_NAME"] || "JunoNative.ipa",
-    silent: false,
-    skip_package_ipa: false,
-    skip_package_pkg: true,
-    include_symbols: true,
-    include_bitcode: false,
-    export_method: "app-store",
+    workspace:            has_workspace ? workspace_path : nil,
+    project:              has_workspace ? nil            : project_path,
+    scheme:               "JunoNative",
+    configuration:        "Release",
+    clean:                true,
+    output_directory:     File.expand_path("../fastlane/build/ios", __dir__),
+    output_name:          ENV["IOS_OUTPUT_NAME"] || "JunoNative.ipa",
+    silent:               false,
+    skip_package_ipa:     false,
+    skip_package_pkg:     true,
+    include_symbols:      true,
+    include_bitcode:      false,
+    export_method:        "app-store",
     skip_profile_detection: false,
-    result_bundle: true,
-    buildlog_path: File.expand_path("../fastlane/logs", __dir__)
+    result_bundle:        true,
+    buildlog_path:        File.expand_path("../fastlane/logs", __dir__)
   }.compact
 end
 
-platform :ios do
-  #
-  # TEST / DSP
-  #
+platform :ios, '15.1' do
+
   desc "Run unit tests for the Juno DSP core via CMake/CTest"
   lane :dsp_tests do
     sh("cmake -S . -B fastlane/build/cmake -DCMAKE_BUILD_TYPE=Debug")
@@ -69,59 +67,24 @@ platform :ios do
 
   desc "Compile the C++ DSP engine and run basic tests"
   lane :compile_dsp_engine do
-    # Fastfile lives in fastlane/, so the project root is one level up
     project_root = File.expand_path("..", __dir__)
-    build_dir    = File.join(project_root, "fastlane", "build", "cmake")
+    build_dir    = File.join(project_root, "fastlane/build/cmake")
 
     sh("cmake -S #{project_root} -B #{build_dir} -DCMAKE_BUILD_TYPE=Release")
     sh("cmake --build #{build_dir} --config Release")
   end
 
-  #
-  # TURBOMODULES / CODEGEN
-  #
   desc "Compile React Native TurboModules (JSI/Native codegen)"
   lane :compile_turbo_modules do
-    # Fastfile is in fastlane/, project root is one level up
     project_root = File.expand_path("..", __dir__)
-    script_path  = File.join(project_root, "scripts", "compile-turbo-modules.sh")
+    script_path  = File.join(project_root, "scripts/compile-turbo-modules.sh")
 
-    unless File.exist?(script_path)
-      UI.user_error!("TurboModules script not found at #{script_path}")
-    end
+    UI.user_error!("TurboModules script not found at #{script_path}") unless File.exist?(script_path)
 
     UI.message("Running TurboModule codegen using #{script_path}")
     sh("bash #{script_path}")
   end
 
-  #
-  # COCOAPODS
-  #
-  desc "Install CocoaPods for the iOS project"
-  lane :install_cocoapods do
-    pods_dir = File.join("ios", "Pods")
-    podfile  = File.join("ios", "Podfile")
-
-    unless File.exist?(podfile)
-      UI.user_error!("Podfile not found at #{podfile}. Cannot run pod install.")
-    end
-
-    Dir.chdir("ios") do
-      UI.message("Installing CocoaPods in ios/ (bundle exec pod install || pod install)…")
-      # Prefer the bundled gems, fall back to system pod if necessary
-      sh("bundle exec pod install || pod install")
-    end
-
-    if Dir.exist?(pods_dir)
-      UI.success("CocoaPods installed successfully. Pods directory present at #{pods_dir}")
-    else
-      UI.user_error!("CocoaPods install seems to have failed: #{pods_dir} not found.")
-    end
-  end
-
-  #
-  # PRIVATE “BUILD PREP” LANES
-  #
   private_lane :prepare_build_assets do
     compile_dsp_engine
     compile_turbo_modules
@@ -129,18 +92,10 @@ platform :ios do
 
   private_lane :compile_swift_sources do
     workspace_path = File.expand_path("../ios/JunoNative.xcworkspace", __dir__)
-    project_path   = File.expand_path("../ios/JunoNative.xcodeproj", __dir__)
+    project_path   = File.expand_path("../ios/JunoNative.xcodeproj",   __dir__)
 
-    has_workspace = File.exist?(workspace_path)
-    has_project   = File.exist?(project_path)
-
-    UI.message("Checking Xcode project/workspace presence:")
-    UI.message(" - workspace: #{workspace_path} (#{has_workspace ? 'found' : 'missing'})")
-    UI.message(" - project:   #{project_path} (#{has_project ? 'found' : 'missing'})")
-
-    if has_workspace
-      UI.message("Compiling via workspace (preferred)…")
-      sh(%Q[
+    if File.exist?(workspace_path)
+      sh <<~CMD
         set -o pipefail && xcodebuild \
           -workspace "#{workspace_path}" \
           -scheme JunoNative \
@@ -149,10 +104,9 @@ platform :ios do
           -destination 'generic/platform=iOS' \
           CODE_SIGNING_ALLOWED=NO \
           build
-      ])
-    elsif has_project
-      UI.message("Workspace missing, falling back to project…")
-      sh(%Q[
+      CMD
+    elsif File.exist?(project_path)
+      sh <<~CMD
         set -o pipefail && xcodebuild \
           -project "#{project_path}" \
           -scheme JunoNative \
@@ -161,39 +115,25 @@ platform :ios do
           -destination 'generic/platform=iOS' \
           CODE_SIGNING_ALLOWED=NO \
           build
-      ])
+      CMD
     else
       UI.user_error!("Neither #{workspace_path} nor #{project_path} exists. Check your repo structure and CocoaPods installation.")
     end
   end
 
-  #
-  # PUBLIC LANES
-  #
   desc "Local build for iOS (no upload)"
   lane :build do
     prepare_build_assets
-    install_cocoapods
     compile_swift_sources
-
-    build_options = ios_build_options
-    build_app(build_options)
+    build_app(ios_build_options)
   end
 
   desc "CI lane: build iOS app and upload to TestFlight using App Store Connect API key"
   lane :ios_ci do
     UI.message("Starting iOS CI lane…")
-
-    # 1) DSP + TurboModules
     prepare_build_assets
-
-    # 2) Install Pods so xcconfig + workspace exist
-    install_cocoapods
-
-    # 3) Quick compile of Swift/ObjC sources without codesigning
     compile_swift_sources
 
-    # 4) Archive & upload
     api_key = app_store_api_key_hash
     build_options = ios_build_options
 
@@ -204,13 +144,13 @@ platform :ios do
       skip_waiting_for_build_processing: false,
       distribute_external: false,
       beta_app_review_info: {
-        contact_email: ENV["APPLE_ID"],
+        contact_email:      ENV["APPLE_ID"],
         contact_first_name: "Alexis",
-        contact_last_name: "Boulet",
-        contact_phone: "",
-        demo_account_name: "",
+        contact_last_name:  "Boulet",
+        contact_phone:      "",
+        demo_account_name:  "",
         demo_account_password: "",
-        notes: "JunoNative CI build"
+        notes:              "JunoNative CI build"
       }
     )
   end
