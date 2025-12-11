@@ -4,8 +4,12 @@
 <dict>
   <key>method</key>
   <string>app-store</string>
+  <key>teamID</key>
+  <string></string>
   <key>signingStyle</key>
-  <string>automatic</string>
+  <string>manual</string>
+  <key>provisioningProfiles</key>
+  <dict></dict>
   <key>uploadSymbols</key>
   <true/>
   <key>uploadBitcode</key>

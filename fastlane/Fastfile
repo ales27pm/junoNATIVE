@@ -1,3 +1,5 @@
+require "plist"
+
 default_platform(:ios)
 
 # Helper to construct App Store Connect API key hash from environment variables
@@ -53,6 +55,20 @@ def ios_build_options
     UI.user_error!("exportOptions.plist not found at #{export_options_plist}")
   end
 
+  plist_export_options = Plist.parse_xml(export_options_plist) || {}
+  unless ENV["APPLE_TEAM_ID"].to_s.strip.empty?
+    plist_export_options["teamID"] = ENV["APPLE_TEAM_ID"]
+  end
+
+  profile_name = ENV["IOS_PROVISIONING_PROFILE_NAME"]
+  unless profile_name.to_s.strip.empty? || ENV["APP_IDENTIFIER"].to_s.strip.empty?
+    plist_export_options["provisioningProfiles"] ||= {}
+    plist_export_options["provisioningProfiles"][ENV["APP_IDENTIFIER"]] = profile_name
+    plist_export_options["signingStyle"] = "manual"
+  else
+    plist_export_options["signingStyle"] = "automatic"
+  end
+
   {
     workspace:        has_workspace ? workspace_path : nil,
     project:          has_workspace ? nil : project_path,
@@ -69,8 +85,8 @@ def ios_build_options
     include_symbols:  true,
     include_bitcode:  false,
 
-    # 🔑 Use explicit exportOptions.plist instead of export_method
-    export_options:   export_options_plist,
+    # 🔑 Use explicit exportOptions plist instead of export_method
+    export_options:   plist_export_options,
 
     skip_profile_detection: false,
     result_bundle:          true,
@@ -79,6 +95,33 @@ def ios_build_options
     # Help Xcode pick the right team in CI
     export_xcargs: "DEVELOPMENT_TEAM=#{ENV['APPLE_TEAM_ID']}"
   }.compact
+end
+
+def ci_export_options(profile_name)
+  app_identifier = ENV["APP_IDENTIFIER"]
+  team_id = ENV["APPLE_TEAM_ID"]
+
+  if profile_name.to_s.strip.empty?
+    UI.user_error!("Provisioning profile name cannot be empty when constructing CI export options")
+  end
+
+  if app_identifier.to_s.strip.empty? || team_id.to_s.strip.empty?
+    UI.user_error!("APP_IDENTIFIER and APPLE_TEAM_ID must be set for CI export options")
+  end
+
+  {
+    method: "app-store",
+    teamID: team_id,
+    signingStyle: "manual",
+    provisioningProfiles: {
+      app_identifier => profile_name
+    },
+    manageAppVersionAndBuildNumber: true,
+    uploadSymbols: true,
+    uploadBitcode: false,
+    compileBitcode: true,
+    stripSwiftSymbols: true
+  }
 end
 
 platform :ios do
@@ -138,6 +181,9 @@ platform :ios do
     workspace_path = File.expand_path("../ios/JunoNative.xcworkspace", __dir__)
     project_path   = File.expand_path("../ios/JunoNative.xcodeproj", __dir__)
 
+    xcpretty_available = system("which xcpretty >/dev/null 2>&1")
+    formatter_suffix = xcpretty_available ? " | xcpretty --no-color" : ""
+
     if File.exist?(workspace_path)
       UI.message("Compiling Swift sources using workspace: #{workspace_path}")
       sh(%Q[
@@ -148,7 +194,7 @@ platform :ios do
           -sdk iphoneos \
           -destination 'generic/platform=iOS' \
           CODE_SIGNING_ALLOWED=NO \
-          build
+          build#{formatter_suffix}
       ])
     elsif File.exist?(project_path)
       UI.message("Workspace not found; compiling Swift sources using project: #{project_path}")
@@ -160,7 +206,7 @@ platform :ios do
           -sdk iphoneos \
           -destination 'generic/platform=iOS' \
           CODE_SIGNING_ALLOWED=NO \
-          build
+          build#{formatter_suffix}
       ])
     else
       UI.user_error!("Neither #{workspace_path} nor #{project_path} exists. Check your repo structure and CocoaPods installation.")
@@ -186,24 +232,32 @@ platform :ios do
 
     require "base64"
     require "tempfile"
-    dist_cert_base64 = ENV["IOS_DIST_CERT_BASE64"]
-    UI.user_error!("IOS_DIST_CERT_BASE64 must be set") if dist_cert_base64.to_s.strip.empty?
-
-    %w[APPLE_ID IOS_DIST_CERT_PASSWORD APP_APPLE_ID].each do |var|
-      if ENV[var].to_s.strip.empty?
-        UI.user_error!("Environment variable #{var} must be set and non-empty")
-      end
-    end
-
-    {
+    api_key = app_store_api_key_hash
+    required_env_with_examples = {
+      "IOS_DIST_CERT_BASE64" => "export IOS_DIST_CERT_BASE64='<base64-encoded p12>'",
+      "IOS_DIST_CERT_PASSWORD" => "export IOS_DIST_CERT_PASSWORD='your_p12_password'",
+      "APPLE_ID" => "export APPLE_ID='developer@example.com'",
+      "APP_APPLE_ID" => "export APP_APPLE_ID='1234567890' # numeric Apple App ID",
       "APP_IDENTIFIER" => "export APP_IDENTIFIER='com.example.app'",
-      "APPLE_TEAM_ID" => "export APPLE_TEAM_ID='YOURTEAMID'",
-      "APP_APPLE_ID" => "export APP_APPLE_ID='1234567890' # numeric Apple App ID"
-    }.each do |var, example|
+      "APPLE_TEAM_ID" => "export APPLE_TEAM_ID='YOURTEAMID'"
+    }
+
+    required_env_with_examples.each do |var, example|
       if ENV[var].to_s.strip.empty?
         UI.user_error!("Environment variable #{var} must be set before building. Set it via CI secrets or locally using #{example}.")
       end
     end
+
+    dist_cert_base64 = ENV["IOS_DIST_CERT_BASE64"]
+
+    UI.message("Requesting App Store provisioning profile via sigh")
+    profile_path = sigh(
+      app_identifier: ENV["APP_IDENTIFIER"],
+      api_key: api_key,
+      adhoc: false,
+      readonly: true
+    )
+    profile_name = Actions.lane_context[SharedValues::SIGH_PROFILE_NAME] || File.basename(profile_path.to_s, ".mobileprovision")
 
     UI.message("Importing distribution certificate from IOS_DIST_CERT_BASE64")
     dist_p12 = Base64.decode64(dist_cert_base64)
@@ -218,10 +272,10 @@ platform :ios do
       )
     end
 
-    api_key    = app_store_api_key_hash
     build_opts = ios_build_options.merge(
       app_identifier: ENV["APP_IDENTIFIER"],
-      export_team_id: ENV["APPLE_TEAM_ID"]
+      export_team_id: ENV["APPLE_TEAM_ID"],
+      export_options: ci_export_options(profile_name)
     )
 
     build_app(build_opts)
