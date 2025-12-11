@@ -88,15 +88,19 @@ end
 
 # Build a proper Hash for Fastlane's api_key parameter using a Base64-encoded p8 key
 def app_store_api_key_hash
-  decoded_key = Base64.decode64(ENV.fetch("APP_STORE_CONNECT_API_KEY_BASE64"))
+  require "base64"
 
-  {
-    key_id:   ENV.fetch("APP_STORE_CONNECT_API_KEY_ID"),
-    issuer_id: ENV.fetch("APP_STORE_CONNECT_API_KEY_ISSUER_ID"),
-    key:      decoded_key,
-    in_house: false
-  }
-end
+  def app_store_api_key_hash
+    decoded_key = Base64.decode64(ENV.fetch("APP_STORE_CONNECT_API_KEY_BASE64"))
+
+    {
+      key_id:   ENV.fetch("APP_STORE_CONNECT_API_KEY_ID"),
+      issuer_id: ENV.fetch("APP_STORE_CONNECT_API_ISSUER_ID"),
+      key:      decoded_key,
+      in_house: false
+    }
+  end
+
 
 default_platform(:ios)
 
