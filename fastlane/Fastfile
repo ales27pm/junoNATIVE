@@ -127,7 +127,7 @@ def app_store_api_key_hash
   }
 end
 
-# Choose workspace or project dynamically for build_app.
+# Choose workspace or project dynamically for build_app (no api_key; authentication is handled by upload_to_testflight).
 def ios_build_options
   ios_paths = resolve_ios_project_paths
   base = {
