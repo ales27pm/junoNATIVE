@@ -45,7 +45,7 @@ target 'JunoNative' do
   config = use_native_modules!([
     'node',
     '-e',
-    "process.chdir('#{root_path}');require('#{cli_entrypoint}').run()"
+    "process.chdir('#{root_path}');process.argv=['','', 'config'];require('#{cli_entrypoint}').run()"
   ])
 
   use_react_native!(
