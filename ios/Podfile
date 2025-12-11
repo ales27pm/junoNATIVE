@@ -1,6 +1,6 @@
-platform :ios, '13.0'
+platform :ios, '15.1'
 
-source 'https://github.com/CocoaPods/Specs.git'
+source 'https://cdn.cocoapods.org/'
 
 root_path = File.expand_path('..', __dir__)
 node_modules_path = File.expand_path('../node_modules', __dir__)
@@ -30,7 +30,7 @@ project 'JunoNative.xcodeproj'
 
 target 'JunoNative' do
   # Drive use_native_modules via the actual React Native CLI at the repo root.
-  # React Native 0.76’s autolinking expects no positional array argument here.
+  # React Native 0.76's autolinking expects no positional array argument here.
   config = use_native_modules!
 
   use_react_native!(
@@ -45,8 +45,8 @@ target 'JunoNative' do
 
     installer.pods_project.targets.each do |target|
       target.build_configurations.each do |config|
-        # Keep iOS 13+ minimum and modern build settings
-        config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '13.0'
+        # Keep iOS 15+ minimum and modern build settings
+        config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.1'
       end
     end
   end
