@@ -1,5 +1,9 @@
 #include "JunoDSPEngine.hpp"
 #if defined(__APPLE__)
+#include <TargetConditionals.h>
+#endif
+
+#if defined(__APPLE__) && defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE
 #include "../ios/JunoRenderEngine.hpp"
 #endif
 #include "../parser/Juno106PatchParser.hpp"
@@ -12,7 +16,7 @@ bool JunoDSPEngine::initialize(int sr, int bs, int poly, bool gpuFlag) {
     }
     sampleRate_ = sr;
     bufferSize_ = bs;
-#if defined(__APPLE__)
+#if defined(__APPLE__) && defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE
     useGPU_     = gpuFlag;
 #else
     useGPU_ = false;
@@ -27,7 +31,7 @@ bool JunoDSPEngine::initialize(int sr, int bs, int poly, bool gpuFlag) {
     }
 
     if (useGPU_) {
-#if defined(__APPLE__)
+#if defined(__APPLE__) && defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE
         gpu_ = std::make_unique<JunoRenderEngine>();
         if (!gpu_->initialize(static_cast<float>(sampleRate_), poly, bufferSize_)) {
             gpu_.reset();
@@ -112,11 +116,11 @@ void JunoDSPEngine::renderAudio(float *L, float *R, int n) {
     }
 
     if (useGPU_
-#if defined(__APPLE__)
+#if defined(__APPLE__) && defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE
         && gpu_
 #endif
     ) {
-#if defined(__APPLE__)
+#if defined(__APPLE__) && defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE
         // Collect voice state for GPU without heap allocations on the audio thread.
         if (gpuVoiceCache_ && gpuVoiceCache_->size() >= voices_.size()) {
             for (std::size_t i = 0; i < voices_.size(); ++i) {
