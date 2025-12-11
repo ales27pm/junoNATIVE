@@ -2,37 +2,17 @@ require "fileutils"
 require "base64"
 
 # --- Paths & build configuration ---
-
-# Repo root (Fastfile is in fastlane/, so go one level up)
 ROOT_DIR = File.expand_path("..", __dir__)
-
-IOS_OUTPUT_DIR = ENV.fetch(
-  "IOS_ARTIFACT_DIR",
-  File.join(ROOT_DIR, "fastlane/build/ios")
-)
-
-ANDROID_OUTPUT_DIR = ENV.fetch(
-  "ANDROID_ARTIFACT_DIR",
-  File.join(ROOT_DIR, "android/app/build/outputs/fastlane")
-)
-
-ANDROID_BUNDLE_ROOT = ENV.fetch(
-  "ANDROID_BUNDLE_OUTPUT_DIR",
-  File.join(ROOT_DIR, "android/app/build/outputs/bundle")
-)
-
-CMAKE_BUILD_DIR = ENV.fetch(
-  "CMAKE_BUILD_DIR",
-  File.join(ROOT_DIR, "fastlane/build/cmake")
-)
-
+IOS_OUTPUT_DIR = ENV.fetch("IOS_ARTIFACT_DIR", File.join(ROOT_DIR, "fastlane/build/ios"))
+ANDROID_OUTPUT_DIR = ENV.fetch("ANDROID_ARTIFACT_DIR", File.join(ROOT_DIR, "android/app/build/outputs/fastlane"))
+ANDROID_BUNDLE_ROOT = ENV.fetch("ANDROID_BUNDLE_OUTPUT_DIR", File.join(ROOT_DIR, "android/app/build/outputs/bundle"))
+CMAKE_BUILD_DIR = ENV.fetch("CMAKE_BUILD_DIR", File.join(ROOT_DIR, "fastlane/build/cmake"))
 CMAKE_CONFIGURATION = ENV.fetch("CMAKE_CONFIGURATION", "Release")
 IOS_BUILD_CONFIGURATION = ENV.fetch("IOS_BUILD_CONFIGURATION", "Release")
 IOS_BUILD_DESTINATION = ENV.fetch("IOS_BUILD_DESTINATION", "generic/platform=iOS")
 IOS_SDK = ENV.fetch("IOS_SDK", "iphoneos")
 
 # --- Helpers ---
-
 def resolve_android_bundle(build_type)
   if ANDROID_BUNDLE_ROOT.nil? || ANDROID_BUNDLE_ROOT.strip.empty?
     UI.user_error!("ANDROID_BUNDLE_OUTPUT_DIR is not set")
@@ -120,8 +100,8 @@ def compile_swift_sources
   end
 end
 
-# Build a proper Hash for Fastlane's api_key parameter using your base64 p8
-# Uses your existing secrets:
+# Build a proper Hash for Fastlane's api_key parameter using your base64 p8.
+# Uses environment variables:
 #  - APP_STORE_CONNECT_API_KEY_ID
 #  - APP_STORE_CONNECT_API_ISSUER_ID
 #  - APP_STORE_CONNECT_API_KEY_BASE64
@@ -129,26 +109,25 @@ def app_store_api_key_hash
   decoded_key = Base64.decode64(ENV.fetch("APP_STORE_CONNECT_API_KEY_BASE64"))
 
   {
-    key_id:   ENV.fetch("APP_STORE_CONNECT_API_KEY_ID"),
+    key_id:    ENV.fetch("APP_STORE_CONNECT_API_KEY_ID"),
     issuer_id: ENV.fetch("APP_STORE_CONNECT_API_ISSUER_ID"),
-    key:      decoded_key,
-    in_house: false
+    key:       decoded_key,
+    in_house:  false
   }
 end
 
-# Choose workspace or project dynamically for build_app,
-# and inject api_key if provided.
+# Choose workspace or project dynamically for build_app, and inject api_key if provided.
 def ios_build_options(api_key: nil)
   workspace_path = File.join("ios", "JunoNative.xcworkspace")
   project_path   = File.join("ios", "JunoNative.xcodeproj")
 
   base = {
-    scheme: "JunoNative",
-    configuration: IOS_BUILD_CONFIGURATION,
-    export_method: "app-store",
-    destination: "generic/platform=iOS",
+    scheme:          "JunoNative",
+    configuration:   IOS_BUILD_CONFIGURATION,
+    export_method:   "app-store",
+    destination:     "generic/platform=iOS",
     output_directory: IOS_OUTPUT_DIR,
-    output_name: ENV.fetch("IOS_OUTPUT_NAME", "JunoNative.ipa")
+    output_name:     ENV.fetch("IOS_OUTPUT_NAME", "JunoNative.ipa")
   }
 
   if File.exist?(workspace_path)
@@ -165,15 +144,12 @@ end
 
 default_platform(:ios)
 
-# --- iOS lanes ---
-
 platform :ios do
   desc "Manual iOS release: build and upload to TestFlight using Apple ID session"
   lane :release do
     FileUtils.mkdir_p(IOS_OUTPUT_DIR)
 
     compile_cpp_engine
-
     script_path = File.join(ROOT_DIR, "scripts/compile-turbo-modules.sh")
     sh("bash #{script_path}") if File.exist?(script_path)
 
@@ -181,7 +157,9 @@ platform :ios do
 
     build_app(ios_build_options)
 
-    upload_to_testflight
+    upload_to_testflight(
+      skip_waiting_for_build_processing: true
+    )
   end
 
   desc "Beta: build and upload using App Store Connect API key (base64)"
@@ -189,7 +167,6 @@ platform :ios do
     FileUtils.mkdir_p(IOS_OUTPUT_DIR)
 
     compile_cpp_engine
-
     script_path = File.join(ROOT_DIR, "scripts/compile-turbo-modules.sh")
     sh("bash #{script_path}") if File.exist?(script_path)
 
@@ -210,7 +187,6 @@ platform :ios do
     FileUtils.mkdir_p(IOS_OUTPUT_DIR)
 
     compile_cpp_engine
-
     script_path = File.join(ROOT_DIR, "scripts/compile-turbo-modules.sh")
     sh("bash #{script_path}") if File.exist?(script_path)
 
@@ -227,15 +203,13 @@ platform :ios do
   end
 end
 
-# --- Android lanes (kept for completeness; not used by current CI) ---
-
+# --- Android lanes (kept for completeness) ---
 platform :android do
   desc "Build and upload to Play Console internal track"
   lane :release do |options|
     FileUtils.mkdir_p(ANDROID_OUTPUT_DIR)
 
     compile_cpp_engine
-
     script_path = File.join(ROOT_DIR, "scripts/compile-turbo-modules.sh")
     sh("bash #{script_path}") if File.exist?(script_path)
 
@@ -258,9 +232,6 @@ platform :android do
     )
     FileUtils.cp(release_bundle, archived_bundle)
 
-    upload_to_play_store(
-      track: "internal",
-      aab: archived_bundle
-    )
+    upload_to_play_store(track: "internal", aab: archived_bundle)
   end
 end
