@@ -1,45 +1,42 @@
-const fs = require('fs');
-const path = require('path');
+#!/usr/bin/env node
 
-const packageFiles = [
-  path.join(__dirname, '..', 'package.json'),
-];
+const fs = require("fs");
+const path = require("path");
 
-let hasFailure = false;
+const packageJsonPath = path.join(__dirname, "..", "package.json");
 
-function validatePackage(filePath) {
-  const rel = path.relative(process.cwd(), filePath);
-  try {
-    const raw = fs.readFileSync(filePath, 'utf8');
-    const json = JSON.parse(raw);
-
-    if (!json.private) {
-      console.warn(`[validate-package-json] ${rel}: "private": true is recommended for app repos.`);
-    }
-
-    if (!json.name || typeof json.name !== 'string') {
-      console.error(`[validate-package-json] ${rel}: missing or invalid "name" field.`);
-      hasFailure = true;
-    }
-
-    if (!json.version || typeof json.version !== 'string') {
-      console.error(`[validate-package-json] ${rel}: missing or invalid "version" field.`);
-      hasFailure = true;
-    }
-  } catch (err) {
-    console.error(`[validate-package-json] Failed to parse ${rel}:`, err.message);
-    hasFailure = true;
-  }
+function fail(message) {
+  console.error(`[validate-package-json] ${message}`);
+  process.exit(1);
 }
 
-for (const file of packageFiles) {
-  if (fs.existsSync(file)) {
-    validatePackage(file);
-  } else {
-    console.warn(`[validate-package-json] Skipping missing package file: ${file}`);
-  }
+if (!fs.existsSync(packageJsonPath)) {
+  fail(`package.json not found at ${packageJsonPath}`);
 }
 
-if (hasFailure) {
-  process.exitCode = 1;
+const raw = fs.readFileSync(packageJsonPath, "utf8");
+let pkg;
+try {
+  pkg = JSON.parse(raw);
+} catch (e) {
+  fail(`Invalid JSON in package.json: ${e.message}`);
 }
+
+if (!pkg.name || pkg.name.trim().length === 0) {
+  fail("package.json is missing a non-empty 'name' field.");
+}
+
+if (!pkg.version || pkg.version.trim().length === 0) {
+  fail("package.json is missing a non-empty 'version' field.");
+}
+
+if (!pkg.scripts || typeof pkg.scripts !== "object") {
+  fail("package.json is missing a 'scripts' section.");
+}
+
+if (!pkg.scripts["ios-ci"]) {
+  fail("package.json is missing an 'ios-ci' script used by CI.");
+}
+
+console.log("[validate-package-json] package.json looks valid for iOS CI.");
+process.exit(0);
