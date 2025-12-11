@@ -54,6 +54,11 @@ if File.exist?(react_native_pods)
 
     unless community_cli_path
       Pod::UI.puts 'React Native CLI not found in Juno-Native node_modules or the React Native bundle; install it with `npm --prefix Juno-Native install -D @react-native-community/cli` or `yarn add -D @react-native-community/cli` before running pod install.'
+
+      if ENV['NODE_ENV']&.casecmp('production')&.zero? || ENV['NPM_CONFIG_PRODUCTION'] == 'true'
+        Pod::UI.puts 'Detected production-only npm install; reinstall dependencies with dev packages using `NODE_ENV=development npm ci --include=dev --prefix Juno-Native`.'
+      end
+
       raise Pod::Informative, 'Missing React Native CLI; install it to enable native module autolinking.'
     end
 

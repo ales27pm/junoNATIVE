@@ -22,7 +22,11 @@ jobs:
 
       - name: Install JS deps
         working-directory: Juno-Native
-        run: npm ci
+        run: |
+          # Ensure development dependencies (including the React Native CLI used by the Podfile)
+          # are available even if NODE_ENV is set to production by the runner environment.
+          export NODE_ENV=development
+          npm ci --include=dev
       - name: Install CocoaPods
         working-directory: ios
         run: pod install --repo-update
