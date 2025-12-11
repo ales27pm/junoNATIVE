@@ -27,6 +27,12 @@ fi
 
 mkdir -p "$OUTPUT_DIR"
 
+# Ensure the directory structure expected by React Native codegen exists. Recent
+# versions attempt to clean up generated artifacts and will `stat` the Android
+# path even when nothing was produced. Creating the path up front keeps the
+# cleanup step deterministic and prevents ENOENT failures in CI.
+mkdir -p "$OUTPUT_DIR/android/app/build/generated/source/codegen"
+
 echo "[codegen] Running React Native TurboModule codegen..."
 node "$CODEGEN_SCRIPT" \
   -p "$ROOT_DIR" \
