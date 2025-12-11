@@ -5,7 +5,7 @@ on:
     branches:
       - main
     tags:
-      - "ios-v*"
+      - 'ios-v*'
   workflow_dispatch:
 
 jobs:
@@ -13,115 +13,49 @@ jobs:
     runs-on: macos-14
 
     env:
-      # Apple account / app metadata
+      # Fastlane and signing credentials
       APPLE_ID: ${{ secrets.APPLE_ID }}
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
       APP_IDENTIFIER: ${{ secrets.APP_IDENTIFIER }}
-
-      # App Store Connect API key (base64-encoded p8)
+      MATCH_KEYCHAIN_PASSWORD: ${{ secrets.MATCH_KEYCHAIN_PASSWORD }}
       APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
       APP_STORE_CONNECT_API_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_API_ISSUER_ID }}
       APP_STORE_CONNECT_API_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_API_KEY_BASE64 }}
 
-      # Optional for match / keychain if you use it later
-      MATCH_KEYCHAIN_PASSWORD: ${{ secrets.MATCH_KEYCHAIN_PASSWORD }}
-
-      # IPA name used by Fastlane
-      IOS_OUTPUT_NAME: JunoNative.ipa
-
     steps:
-      - name: 🧾 Checkout code
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: 🟢 Setup Node 22
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: '24'
           cache: 'npm'
 
-      - name: 💎 Setup Ruby & Bundler
+      - name: Install JS dependencies
+        run: npm ci
+
+      - name: Validate package.json
+        run: node scripts/validate-package-json.js
+
+      - name: Lint code
+        run: npm run lint
+
+      - name: Compile TurboModules
+        run: bash scripts/compile-turbo-modules.sh
+
+      - name: Setup Ruby & Bundler
         uses: ruby/setup-ruby@v1
         with:
           ruby-version: '3.2'
           bundler-cache: true
 
-      - name: 📦 Install JS dependencies
-        run: npm ci
+      - name: Bundle install
+        run: bundle install
 
-      - name: 🧪 Validate package.json (optional)
-        run: |
-          if [ -f scripts/validate-package-json.js ]; then
-            node scripts/validate-package-json.js
-          else
-            echo "No validate-package-json script, skipping."
-          fi
+      - name: Install CocoaPods
+        run: bundle exec pod install
+        working-directory: ios
 
-      - name: 🧹 Lint code (optional)
-        run: |
-          if npm run | grep -q "lint"; then
-            npm run lint
-          else
-            echo "No lint script, skipping."
-          fi
-
-      - name: ⚙️ Compile TurboModules (optional but recommended)
-        run: |
-          if [ -f scripts/compile-turbo-modules.sh ]; then
-            bash scripts/compile-turbo-modules.sh
-          else
-            echo "No scripts/compile-turbo-modules.sh, skipping."
-          fi
-
-      - name: 🍫 Install CocoaPods
-        run: bundle exec pod install --project-directory=ios
-
-      - name: 🔎 Verify Xcode workspace exists
-        run: |
-          if [ ! -d ios/JunoNative.xcworkspace ] && [ ! -d ios/JunoNative.xcodeproj ]; then
-            echo "Workspace or project is missing after pod install"
-            ls -la ios
-            exit 1
-          fi
-
-      - name: 🚀 Build & upload iOS app via Fastlane (ios_ci lane)
-        run: |
-          bundle exec fastlane ios ios_ci
-
-      - name: 📂 Copy compiled native artifacts
-        run: |
-          set -euo pipefail
-          mkdir -p ios_artifacts
-
-          DERIVED_PATH="$HOME/Library/Developer/Xcode/DerivedData"
-
-          # Try to find libJunoNative.a first
-          FOUND_LIB=$(find "$DERIVED_PATH" -name "libJunoNative.a" -print -quit || true)
-
-          # Fallback: try libjuno_engine.a from the C++ core
-          if [ -z "$FOUND_LIB" ]; then
-            FOUND_LIB=$(find "$DERIVED_PATH" -name "libjuno_engine.a" -print -quit || true)
-          fi
-
-          if [ -z "$FOUND_LIB" ]; then
-            echo "❌ No static library found (libJunoNative.a or libjuno_engine.a) in DerivedData"
-            exit 1
-          fi
-
-          echo "✅ Found static lib: $FOUND_LIB"
-          cp "$FOUND_LIB" ios_artifacts/
-
-          # Optional: include headers if they exist
-          if ls ios/JunoNative/NativeModules/*.h >/dev/null 2>&1; then
-            mkdir -p ios_artifacts/headers
-            cp ios/JunoNative/NativeModules/*.h ios_artifacts/headers/
-          else
-            echo "No NativeModules headers found, skipping."
-          fi
-
-      - name: 💾 Commit and push artifacts
-        run: |
-          git config user.name "github-actions"
-          git config user.email "actions@github.com"
-          git add ios_artifacts || true
-          git commit -m "Add compiled native iOS libs for Expo testing [skip ci]" || echo "No changes to commit"
-          git push || echo "No changes to push"
+      - name: Run Fastlane iOS CI lane
+        run: bundle exec fastlane ios ios_ci
