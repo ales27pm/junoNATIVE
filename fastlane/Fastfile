@@ -2,8 +2,14 @@ require "fileutils"
 
 ROOT_DIR = File.expand_path("..", __dir__)
 IOS_OUTPUT_DIR = ENV.fetch("IOS_ARTIFACT_DIR", File.join(ROOT_DIR, "fastlane/build/ios"))
-ANDROID_OUTPUT_DIR = ENV.fetch("ANDROID_ARTIFACT_DIR", File.join(ROOT_DIR, "fastlane/build/android"))
-ANDROID_BUNDLE_ROOT = ENV.fetch("ANDROID_BUNDLE_OUTPUT_DIR", File.join(ROOT_DIR, "android/app/build/outputs/bundle"))
+ANDROID_OUTPUT_DIR = ENV.fetch(
+  "ANDROID_ARTIFACT_DIR",
+  File.join(ROOT_DIR, "rtn-juno-engine/android/app/build/outputs/fastlane")
+)
+ANDROID_BUNDLE_ROOT = ENV.fetch(
+  "ANDROID_BUNDLE_OUTPUT_DIR",
+  File.join(ROOT_DIR, "rtn-juno-engine/android/app/build/outputs/bundle")
+)
 ANDROID_BUNDLE_PATH = ENV["ANDROID_RELEASE_BUNDLE_PATH"]
 CMAKE_BUILD_DIR = ENV.fetch("CMAKE_BUILD_DIR", File.join(ROOT_DIR, "fastlane/build/cmake"))
 CMAKE_CONFIGURATION = ENV.fetch("CMAKE_CONFIGURATION", "Release")
@@ -112,10 +118,13 @@ platform :android do
 
     build_type = options[:build_type] || ENV.fetch("ANDROID_BUILD_TYPE", "Release")
 
+    gradlew_path = File.join(ROOT_DIR, "rtn-juno-engine/android/gradlew")
+    UI.user_error!("Gradle wrapper not found at #{gradlew_path}") unless File.exist?(gradlew_path)
+
     gradle(
       task: "bundle",
       build_type: build_type,
-      project_dir: "android"
+      project_dir: "rtn-juno-engine/android"
     )
 
     release_bundle = resolve_android_bundle(build_type)
