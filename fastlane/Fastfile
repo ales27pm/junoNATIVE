@@ -6,7 +6,7 @@ default_platform(:ios)
 # Helper to construct App Store Connect API key hash from environment variables
 def app_store_api_key_hash
   api_key_id = ENV["APP_STORE_CONNECT_API_KEY_ID"]
-  issuer_id  = ENV["APP_STORE_CONNECT_API_ISSUER_ID"]
+  issuer_id  = ENV["APP_STORE_CONNECT_API_KEY_ISSUER_ID"] || ENV["APP_STORE_CONNECT_API_ISSUER_ID"]
   key_base64 = ENV["APP_STORE_CONNECT_API_KEY_BASE64"]
   raw_key    = ENV["APP_STORE_CONNECT_API_KEY"]
 
@@ -60,13 +60,17 @@ def ios_build_options
     plist_export_options["teamID"] = ENV["APPLE_TEAM_ID"]
   end
 
-  profile_name = ENV["IOS_PROVISIONING_PROFILE_NAME"]
-  unless profile_name.to_s.strip.empty? || ENV["APP_IDENTIFIER"].to_s.strip.empty?
-    plist_export_options["provisioningProfiles"] ||= {}
-    plist_export_options["provisioningProfiles"][ENV["APP_IDENTIFIER"]] = profile_name
-    plist_export_options["signingStyle"] = "manual"
-  else
+  profile_name   = ENV["IOS_PROVISIONING_PROFILE_NAME"]
+  app_identifier = ENV["APP_IDENTIFIER"]
+
+  if profile_name.to_s.strip.empty?
     plist_export_options["signingStyle"] = "automatic"
+  elsif app_identifier.to_s.strip.empty?
+    UI.user_error!("IOS_PROVISIONING_PROFILE_NAME was provided but APP_IDENTIFIER is missing")
+  else
+    plist_export_options["provisioningProfiles"] ||= {}
+    plist_export_options["provisioningProfiles"][app_identifier] = profile_name
+    plist_export_options["signingStyle"] = "manual"
   end
 
   {
@@ -95,33 +99,6 @@ def ios_build_options
     # Help Xcode pick the right team in CI
     export_xcargs: "DEVELOPMENT_TEAM=#{ENV['APPLE_TEAM_ID']}"
   }.compact
-end
-
-def ci_export_options(profile_name)
-  app_identifier = ENV["APP_IDENTIFIER"]
-  team_id = ENV["APPLE_TEAM_ID"]
-
-  if profile_name.to_s.strip.empty?
-    UI.user_error!("Provisioning profile name cannot be empty when constructing CI export options")
-  end
-
-  if app_identifier.to_s.strip.empty? || team_id.to_s.strip.empty?
-    UI.user_error!("APP_IDENTIFIER and APPLE_TEAM_ID must be set for CI export options")
-  end
-
-  {
-    method: "app-store",
-    teamID: team_id,
-    signingStyle: "manual",
-    provisioningProfiles: {
-      app_identifier => profile_name
-    },
-    manageAppVersionAndBuildNumber: true,
-    uploadSymbols: true,
-    uploadBitcode: false,
-    compileBitcode: true,
-    stripSwiftSymbols: true
-  }
 end
 
 platform :ios do
@@ -272,13 +249,9 @@ platform :ios do
       )
     end
 
-    build_opts = ios_build_options.merge(
-      app_identifier: ENV["APP_IDENTIFIER"],
-      export_team_id: ENV["APPLE_TEAM_ID"],
-      export_options: ci_export_options(profile_name)
-    )
+    ENV["IOS_PROVISIONING_PROFILE_NAME"] = profile_name
 
-    build_app(build_opts)
+    build_app(ios_build_options)
 
     upload_to_testflight(
       api_key:                           api_key,
