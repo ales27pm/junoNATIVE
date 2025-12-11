@@ -15,6 +15,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Verify Android project directory
+        id: android_project
+        run: |
+          if [ -d "android" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Android project directory not found; skipping build and artifact upload."
+          fi
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -28,20 +38,25 @@ jobs:
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v2
+        if: steps.android_project.outputs.present == 'true'
 
       - name: Install Android SDK components
+        if: steps.android_project.outputs.present == 'true'
         run: |
           sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
           yes | sdkmanager --licenses
 
       - name: Install JS dependencies
+        if: steps.android_project.outputs.present == 'true'
         run: npm ci
 
       - name: Build Android debug APK
+        if: steps.android_project.outputs.present == 'true'
         working-directory: android
         run: ./gradlew assembleDebug --no-daemon
 
       - name: Upload APK artifact
+        if: steps.android_project.outputs.present == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: JunoNative-android-debug
