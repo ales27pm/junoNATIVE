@@ -13,6 +13,29 @@ IOS_BUILD_DESTINATION = ENV.fetch("IOS_BUILD_DESTINATION", "generic/platform=iOS
 IOS_SDK = ENV.fetch("IOS_SDK", "iphoneos")
 
 # --- Helpers ---
+def resolve_ios_project_paths
+  candidates = [
+    { workspace: "ios/JunoNative.xcworkspace", project: "ios/JunoNative.xcodeproj" },
+    { workspace: "JunoNative.xcworkspace", project: "JunoNative.xcodeproj" }
+  ]
+
+  candidates.each do |paths|
+    workspace_path = File.join(ROOT_DIR, paths[:workspace])
+    project_path = File.join(ROOT_DIR, paths[:project])
+
+    if File.exist?(workspace_path)
+      return { type: :workspace, path: paths[:workspace] }
+    elsif File.exist?(project_path)
+      return { type: :project, path: paths[:project] }
+    end
+  end
+
+  UI.user_error!(
+    "Neither ios/JunoNative.xcworkspace nor ios/JunoNative.xcodeproj nor root " \
+    "JunoNative.xcworkspace/xcodeproj exists. Check your repo structure and CocoaPods installation."
+  )
+end
+
 def resolve_android_bundle(build_type)
   if ANDROID_BUNDLE_ROOT.nil? || ANDROID_BUNDLE_ROOT.strip.empty?
     UI.user_error!("ANDROID_BUNDLE_OUTPUT_DIR is not set")
@@ -66,38 +89,26 @@ def compile_cpp_engine
   sh("cmake --build #{CMAKE_BUILD_DIR} --config #{CMAKE_CONFIGURATION}")
 end
 
-# Auto-detect workspace vs project for the initial build sanity check
 def compile_swift_sources
-  workspace_path = File.join("ios", "JunoNative.xcworkspace")
-  project_path   = File.join("ios", "JunoNative.xcodeproj")
+  ios_paths = resolve_ios_project_paths
 
-  if File.exist?(workspace_path)
-    UI.message("Using Xcode workspace at #{workspace_path}")
-    sh(%Q[
-      set -o pipefail && xcodebuild \
-        -workspace #{workspace_path} \
-        -scheme JunoNative \
-        -configuration #{IOS_BUILD_CONFIGURATION} \
-        -sdk #{IOS_SDK} \
-        -destination '#{IOS_BUILD_DESTINATION}' \
-        CODE_SIGNING_ALLOWED=NO \
-        build
-    ])
-  elsif File.exist?(project_path)
-    UI.message("Workspace not found, falling back to Xcode project at #{project_path}")
-    sh(%Q[
-      set -o pipefail && xcodebuild \
-        -project #{project_path} \
-        -scheme JunoNative \
-        -configuration #{IOS_BUILD_CONFIGURATION} \
-        -sdk #{IOS_SDK} \
-        -destination '#{IOS_BUILD_DESTINATION}' \
-        CODE_SIGNING_ALLOWED=NO \
-        build
-    ])
-  else
-    UI.user_error!("Neither #{workspace_path} nor #{project_path} exists. Check your repo structure and CocoaPods installation.")
-  end
+  xcode_target_flag =
+    if ios_paths[:type] == :workspace
+      "-workspace #{ios_paths[:path]}"
+    else
+      "-project #{ios_paths[:path]}"
+    end
+
+  sh <<~CMD
+    set -o pipefail && xcodebuild \
+      #{xcode_target_flag} \
+      -scheme JunoNative \
+      -configuration #{IOS_BUILD_CONFIGURATION} \
+      -sdk #{IOS_SDK} \
+      -destination '#{IOS_BUILD_DESTINATION}' \
+      CODE_SIGNING_ALLOWED=NO \
+      build
+  CMD
 end
 
 # Build a proper Hash for Fastlane's api_key parameter using your base64 p8.
@@ -118,9 +129,7 @@ end
 
 # Choose workspace or project dynamically for build_app, and inject api_key if provided.
 def ios_build_options(api_key: nil)
-  workspace_path = File.join("ios", "JunoNative.xcworkspace")
-  project_path   = File.join("ios", "JunoNative.xcodeproj")
-
+  ios_paths = resolve_ios_project_paths
   base = {
     scheme:          "JunoNative",
     configuration:   IOS_BUILD_CONFIGURATION,
@@ -130,12 +139,10 @@ def ios_build_options(api_key: nil)
     output_name:     ENV.fetch("IOS_OUTPUT_NAME", "JunoNative.ipa")
   }
 
-  if File.exist?(workspace_path)
-    base[:workspace] = workspace_path
-  elsif File.exist?(project_path)
-    base[:project] = project_path
+  if ios_paths[:type] == :workspace
+    base[:workspace] = ios_paths[:path]
   else
-    UI.user_error!("Neither #{workspace_path} nor #{project_path} exists. Cannot determine Xcode target for build_app.")
+    base[:project] = ios_paths[:path]
   end
 
   base[:api_key] = api_key if api_key
@@ -194,7 +201,25 @@ platform :ios do
 
     api_key = app_store_api_key_hash
 
-    build_app(ios_build_options(api_key: api_key))
+    ios_paths = resolve_ios_project_paths
+
+    build_app_options = {
+      scheme: "JunoNative",
+      configuration: IOS_BUILD_CONFIGURATION,
+      export_method: "app-store",
+      destination: "generic/platform=iOS",
+      output_directory: IOS_OUTPUT_DIR,
+      output_name: ENV.fetch("IOS_OUTPUT_NAME", "JunoNative.ipa"),
+      api_key: api_key
+    }
+
+    if ios_paths[:type] == :workspace
+      build_app_options[:workspace] = ios_paths[:path]
+    else
+      build_app_options[:project] = ios_paths[:path]
+    end
+
+    build_app(build_app_options)
 
     upload_to_testflight(
       api_key: api_key,
