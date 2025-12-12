@@ -8,11 +8,58 @@ require "base64"
 # Root of the repo (Fastfile lives in fastlane/)
 ROOT_DIR = File.expand_path("..", __dir__)
 
+############################################################
+# Helpers
+############################################################
+
 def ensure_env!(vars)
   missing = vars.select { |v| ENV[v].to_s.empty? }
   unless missing.empty?
     UI.user_error!("Missing required environment variables: #{missing.join(", ")}")
   end
+end
+
+# Resolve App Store Connect API key from multiple possible env layouts:
+# - APP_STORE_CONNECT_API_KEY_ID / APP_STORE_CONNECT_API_KEY_ISSUER_ID /
+#   APP_STORE_CONNECT_API_KEY_BASE64 (base64 of .p8)
+# - or APP_STORE_CONNECT_API_KEY_ID / APP_STORE_CONNECT_API_KEY_ISSUER_ID /
+#   APP_STORE_CONNECT_API_KEY (raw .p8 content)
+# - or APPLE_KEY_ID / APPLE_ISSUER_ID / APPLE_KEY (raw .p8)
+def resolve_asc_config
+  key_id = ENV["APP_STORE_CONNECT_API_KEY_ID"] || ENV["APPLE_KEY_ID"]
+  issuer_id = ENV["APP_STORE_CONNECT_API_KEY_ISSUER_ID"] || ENV["APPLE_ISSUER_ID"]
+
+  key_base64 = ENV["APP_STORE_CONNECT_API_KEY_BASE64"]
+  key_raw    = ENV["APP_STORE_CONNECT_API_KEY"] || ENV["APPLE_KEY"]
+
+  if key_id.to_s.empty? || issuer_id.to_s.empty?
+    UI.user_error!("Missing ASC key id / issuer id. Provide either:
+      - APP_STORE_CONNECT_API_KEY_ID and APP_STORE_CONNECT_API_KEY_ISSUER_ID
+      or
+      - APPLE_KEY_ID and APPLE_ISSUER_ID (which map to the same values)."
+    )
+  end
+
+  if key_base64.to_s.empty? && key_raw.to_s.empty?
+    UI.user_error!("Missing ASC private key. Provide either:
+      - APP_STORE_CONNECT_API_KEY_BASE64 (base64-encoded .p8 contents)
+      or
+      - APP_STORE_CONNECT_API_KEY / APPLE_KEY (raw .p8 contents)."
+    )
+  end
+
+  key_content =
+    if !key_base64.to_s.empty?
+      Base64.decode64(key_base64)
+    else
+      key_raw
+    end
+
+  {
+    key_id: key_id,
+    issuer_id: issuer_id,
+    key_content: key_content
+  }
 end
 
 platform :ios do
@@ -37,7 +84,7 @@ platform :ios do
       sdk: "iphoneos",
       clean: true,
 
-      # Signing export behaviour
+      # Signing/export
       export_method: "app-store", # let gym generate exportOptionsPlist itself
 
       # Output
@@ -49,7 +96,8 @@ platform :ios do
       include_bitcode: false,
       silent: false,
       skip_profile_detection: false,
-      # Pass development team to xcodebuild
+
+      # Pass team ID into xcodebuild
       xcargs: "DEVELOPMENT_TEAM=#{ENV['APPLE_TEAM_ID']}"
     }
 
@@ -76,24 +124,24 @@ platform :ios do
   private_lane :verify_appstore_connect do
     UI.header("🔍 Verifying ASC credentials, certificate & profile")
 
+    # These are always required
     ensure_env!([
       "APPLE_ID",
       "APPLE_TEAM_ID",
       "APP_IDENTIFIER",
-      "APP_STORE_CONNECT_API_KEY_ID",
-      "APP_STORE_CONNECT_API_KEY_ISSUER_ID",
-      "APP_STORE_CONNECT_API_KEY_BASE64",
       "IOS_DIST_CERT_BASE64",
       "IOS_DIST_CERT_PASSWORD"
     ])
 
-    # ---- ASC API key ----
-    UI.message("🔑 Creating App Store Connect API key")
+    # ---- ASC API key (flexible env resolution) ----
+    UI.message("🔑 Resolving App Store Connect API key configuration")
+    asc_cfg = resolve_asc_config
 
+    UI.message("🔑 Creating App Store Connect API key")
     api_key = app_store_connect_api_key(
-      key_id: ENV["APP_STORE_CONNECT_API_KEY_ID"],
-      issuer_id: ENV["APP_STORE_CONNECT_API_KEY_ISSUER_ID"],
-      key_content: Base64.decode64(ENV["APP_STORE_CONNECT_API_KEY_BASE64"])
+      key_id: asc_cfg[:key_id],
+      issuer_id: asc_cfg[:issuer_id],
+      key_content: asc_cfg[:key_content]
     )
 
     # Quick sanity: list apps to prove credentials work
