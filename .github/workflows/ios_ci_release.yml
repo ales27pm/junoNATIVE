@@ -14,6 +14,7 @@ jobs:
     runs-on: macos-14
 
     env:
+      # --- Ruby / bundler path ---
       BUNDLE_PATH: vendor/bundle
 
       # --- App & team identifiers ---
@@ -21,33 +22,34 @@ jobs:
       APP_IDENTIFIER: ${{ secrets.APP_IDENTIFIER }}
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
-      # --- App Store Connect API key (MUST be set as secrets) ---
-      APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APPLE_KEY_ID }}
-      APP_STORE_CONNECT_API_ISSUER_ID: ${{ secrets.APPLE_ISSUER_ID }}
-      APP_STORE_CONNECT_API_KEY_BASE64: ${{ secrets.APPLE_KEY }}
+      # --- App Store Connect API key (these MUST be set as GitHub secrets) ---
+      # Use the SAME secret names you used in the verify_appstore_connect workflow
+      APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+      APP_STORE_CONNECT_API_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_API_ISSUER_ID }}
+      APP_STORE_CONNECT_API_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_API_KEY_BASE64 }}
 
-      # --- Distribution certificate ---
+      # --- Distribution certificate (.p12) ---
       IOS_DIST_CERT_BASE64: ${{ secrets.IOS_DIST_CERT_BASE64 }}
       IOS_DIST_CERT_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
 
-      # Optional; you can set a non-empty secret, but we don't use it in Fastlane anymore
+      # Optional, used by the manual keychain step
       KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
 
     steps:
       - name: 🧾 Checkout code
         uses: actions/checkout@v4
 
-      # -------- JS deps so Podfile is happy --------
+      # ---------- JS deps (needed for Podfile checks) ----------
       - name: 🧩 Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
 
-      - name: 📦 Install JS dependencies (npm ci)
+      - name: 📦 Install JS dependencies
         run: npm ci
 
-      # -------- Ruby / Bundler --------
+      # ---------- Ruby / Bundler ----------
       - name: 💎 Setup Ruby
         uses: ruby/setup-ruby@v1
         with:
@@ -57,7 +59,7 @@ jobs:
       - name: 📚 Install Ruby gems
         run: bundle install --jobs 4 --retry 3
 
-      # -------- Import cert into temp keychain --------
+      # ---------- Install Apple certificate into temp keychain ----------
       - name: 🔐 Install Apple distribution certificate
         env:
           IOS_DIST_CERT_BASE64: ${{ secrets.IOS_DIST_CERT_BASE64 }}
@@ -76,10 +78,11 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple: -s -k "${KEYCHAIN_PASSWORD}" "$KEYCHAIN_PATH"
           security list-keychain -d user -s "$KEYCHAIN_PATH"
 
-      # -------- Fastlane does verify + build + upload --------
+      # ---------- Fastlane: verify + build + upload ----------
       - name: 🚀 Build & upload via Fastlane
         run: bundle exec fastlane ios ios_ci
 
+      # ---------- Cleanup ----------
       - name: 🧹 Cleanup keychain
         if: ${{ always() }}
         env:
