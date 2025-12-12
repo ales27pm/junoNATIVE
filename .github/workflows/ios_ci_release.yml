@@ -1,40 +1,43 @@
-name: iOS CI → TestFlight
+name: iOS • Release → TestFlight
 
 on:
   push:
-    branches: [main]     # change if you release from another branch
-  workflow_dispatch:     # allow manual runs
+    branches: [ main ]
+  workflow_dispatch:
 
 jobs:
-  ios-release:
-    runs-on: macos-14-arm64      # Apple Silicon runner, fastest for RN pods
+  build_upload:
+    runs-on: macos-14 # arm64 Sonoma runner
     timeout-minutes: 60
 
-    env:                         # ✨ ALL secrets come from GitHub-Actions secrets
-      APPLE_ID:                      ${{ secrets.APPLE_ID }}
-      APP_IDENTIFIER:                ${{ secrets.APP_IDENTIFIER }}
-      APPLE_TEAM_ID:                 ${{ secrets.APPLE_TEAM_ID }}
-      APP_STORE_CONNECT_API_KEY_ID:  ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
-      APP_STORE_CONNECT_API_ISSUER_ID:  ${{ secrets.APP_STORE_CONNECT_API_ISSUER_ID }}
-      APP_STORE_CONNECT_API_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_API_KEY_BASE64 }}
-      IOS_DIST_CERT_BASE64:          ${{ secrets.IOS_DIST_CERT_BASE64 }}
-      IOS_DIST_CERT_PASSWORD:        ${{ secrets.IOS_DIST_CERT_PASSWORD }}
-      # optional / nice-to-have
-      APP_APPLE_ID:                  ${{ secrets.APP_APPLE_ID }}
+    env:
+      # ASC account + bundle-id
+      APPLE_ID:                       ${{ secrets.APPLE_ID }}
+      APP_IDENTIFIER:                 ${{ secrets.APP_IDENTIFIER }}
+      APPLE_TEAM_ID:                  ${{ secrets.APPLE_TEAM_ID }}
+
+      # ASC API key (.p8 → base64)
+      APP_STORE_CONNECT_API_KEY_ID:     ${{ secrets.ASC_KEY_ID }}
+      APP_STORE_CONNECT_API_ISSUER_ID:  ${{ secrets.ASC_ISSUER_ID }}
+      APP_STORE_CONNECT_API_KEY_BASE64: ${{ secrets.ASC_KEY_BASE64 }}
+
+      # Distribution cert (.p12 → base64) + pass-phrase
+      IOS_DIST_CERT_BASE64:  ${{ secrets.DIST_CERT_BASE64 }}
+      IOS_DIST_CERT_PASSWORD:${{ secrets.DIST_CERT_PASSWORD }}
+
+      # Fastlane output paths
+      LC_ALL: en_US.UTF-8
+      LANG:   en_US.UTF-8
 
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
+      - name: ⬇️  Checkout
+        uses: actions/checkout@v5
 
-      - name: Set up Ruby 3.3 + Bundler cache
+      - name: ⚙️  Set up Ruby + Bundler
         uses: ruby/setup-ruby@v1
         with:
           ruby-version: '3.3'
-          bundler-cache: true            # Gemfile.lock drives the cache
+          bundler-cache: true
 
-      - name: Run iOS CI lane (fastlane ios_ci)
-        run: bundle exec fastlane ios_ci
-
-      # ⬆️  if the lane completes, your build is already uploaded to TF
+      - name: 🏎️  fastlane ios_ci
+        run: bundle exec fastlane ios ios_ci
