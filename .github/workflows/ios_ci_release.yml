@@ -1,43 +1,65 @@
-name: iOS • Release → TestFlight
-
+name: iOS – TestFlight release
 on:
-  push:
-    branches: [ main ]
   workflow_dispatch:
+  push:
+    tags: ["v*"]           # build only on version tags – tweak as you like
 
 jobs:
-  build_upload:
-    runs-on: macos-14 # arm64 Sonoma runner
+  release:
+    runs-on: macos-14  # Apple Silicon runners are ~2× faster
     timeout-minutes: 60
 
+    # -----------------------------
+    # ①  Export all secrets once
+    # -----------------------------
     env:
-      # ASC account + bundle-id
       APPLE_ID:                       ${{ secrets.APPLE_ID }}
       APP_IDENTIFIER:                 ${{ secrets.APP_IDENTIFIER }}
       APPLE_TEAM_ID:                  ${{ secrets.APPLE_TEAM_ID }}
-
-      # ASC API key (.p8 → base64)
-      APP_STORE_CONNECT_API_KEY_ID:     ${{ secrets.ASC_KEY_ID }}
-      APP_STORE_CONNECT_API_ISSUER_ID:  ${{ secrets.ASC_ISSUER_ID }}
-      APP_STORE_CONNECT_API_KEY_BASE64: ${{ secrets.ASC_KEY_BASE64 }}
-
-      # Distribution cert (.p12 → base64) + pass-phrase
-      IOS_DIST_CERT_BASE64:  ${{ secrets.DIST_CERT_BASE64 }}
-      IOS_DIST_CERT_PASSWORD:  ${{ secrets.DIST_CERT_PASSWORD }}
-
-      # Fastlane output paths
-      LC_ALL: en_US.UTF-8
-      LANG:   en_US.UTF-8
+      APP_STORE_CONNECT_API_KEY_ID:   ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+      APP_STORE_CONNECT_API_ISSUER_ID:${{ secrets.APP_STORE_CONNECT_API_ISSUER_ID }}
+      APP_STORE_CONNECT_API_KEY_BASE64:${{ secrets.APP_STORE_CONNECT_API_KEY_BASE64 }}
+      IOS_DIST_CERT_BASE64:           ${{ secrets.IOS_DIST_CERT_BASE64 }}
+      IOS_DIST_CERT_PASSWORD:         ${{ secrets.IOS_DIST_CERT_PASSWORD }}
+      KEYCHAIN_PASSWORD:              ${{ secrets.KEYCHAIN_PASSWORD }}
 
     steps:
-      - name: ⬇️  Checkout
-        uses: actions/checkout@v5
+      - name: 🧾 Checkout
+        uses: actions/checkout@v4
 
-      - name: ⚙️  Set up Ruby + Bundler
+      - name: 🛠 Set up Ruby & Bundler cache
         uses: ruby/setup-ruby@v1
         with:
-          ruby-version: '3.3'
+          ruby-version: "3.3"
           bundler-cache: true
 
-      - name: 🏎️  fastlane ios_ci
+      # -----------------------------
+      # ②  Import cert & profile
+      #     (same trick as verify action)
+      # -----------------------------
+      - name: 🔐 Install certificate & provisioning profile
+        run: |
+          CERT_PATH=$RUNNER_TEMP/dist.p12
+          echo "$IOS_DIST_CERT_BASE64" | base64 --decode > "$CERT_PATH"
+
+          KEYCHAIN=$RUNNER_TEMP/build.keychain-db
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$CERT_PATH" -P "$IOS_DIST_CERT_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security list-keychain -d user -s "$KEYCHAIN"
+
+      # -----------------------------
+      # ③  Build & upload
+      # -----------------------------
+      - name: 🚀 Fastlane – build & TestFlight upload
         run: bundle exec fastlane ios ios_ci
+
+      # -----------------------------
+      # ④  Clean-up (optional)
+      # -----------------------------
+      - name: 🧹 Cleanup keychain
+        if: ${{ always() }}
+        run: |
+          security delete-keychain "$RUNNER_TEMP/build.keychain-db" || true
