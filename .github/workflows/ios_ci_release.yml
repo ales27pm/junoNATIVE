@@ -16,25 +16,28 @@ jobs:
     env:
       BUNDLE_PATH: vendor/bundle
 
+      # --- App & team identifiers ---
       APPLE_ID: ${{ secrets.APPLE_ID }}
       APP_IDENTIFIER: ${{ secrets.APP_IDENTIFIER }}
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
+      # --- App Store Connect API key (MUST be set as secrets) ---
       APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APPLE_KEY_ID }}
       APP_STORE_CONNECT_API_ISSUER_ID: ${{ secrets.APPLE_ISSUER_ID }}
       APP_STORE_CONNECT_API_KEY_BASE64: ${{ secrets.APPLE_KEY }}
 
+      # --- Distribution certificate ---
       IOS_DIST_CERT_BASE64: ${{ secrets.IOS_DIST_CERT_BASE64 }}
       IOS_DIST_CERT_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
 
-      # Optional – you can set a non-empty secret if you like
+      # Optional; you can set a non-empty secret, but we don't use it in Fastlane anymore
       KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
 
     steps:
       - name: 🧾 Checkout code
         uses: actions/checkout@v4
 
-      # -------- JavaScript dependencies (fixes Podfile error) --------
+      # -------- JS deps so Podfile is happy --------
       - name: 🧩 Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -44,7 +47,7 @@ jobs:
       - name: 📦 Install JS dependencies (npm ci)
         run: npm ci
 
-      # -------- Ruby / Bundler setup --------
+      # -------- Ruby / Bundler --------
       - name: 💎 Setup Ruby
         uses: ruby/setup-ruby@v1
         with:
@@ -54,7 +57,7 @@ jobs:
       - name: 📚 Install Ruby gems
         run: bundle install --jobs 4 --retry 3
 
-      # -------- Import Apple certificate into a temporary keychain --------
+      # -------- Import cert into temp keychain --------
       - name: 🔐 Install Apple distribution certificate
         env:
           IOS_DIST_CERT_BASE64: ${{ secrets.IOS_DIST_CERT_BASE64 }}
@@ -65,7 +68,6 @@ jobs:
           echo "$IOS_DIST_CERT_BASE64" | base64 --decode > "$CERT_PATH"
 
           KEYCHAIN_PATH="$RUNNER_TEMP/build.keychain-db"
-          # Allow empty password if KEYCHAIN_PASSWORD is not set, but strongly recommended to set one
           security create-keychain -p "${KEYCHAIN_PASSWORD}" "$KEYCHAIN_PATH"
           security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
           security unlock-keychain -p "${KEYCHAIN_PASSWORD}" "$KEYCHAIN_PATH"
@@ -74,11 +76,10 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple: -s -k "${KEYCHAIN_PASSWORD}" "$KEYCHAIN_PATH"
           security list-keychain -d user -s "$KEYCHAIN_PATH"
 
-      # -------- Run Fastlane CI lane --------
+      # -------- Fastlane does verify + build + upload --------
       - name: 🚀 Build & upload via Fastlane
         run: bundle exec fastlane ios ios_ci
 
-      # (Optional) Tear down keychain explicitly — macOS runners are ephemeral but this is hygienic
       - name: 🧹 Cleanup keychain
         if: ${{ always() }}
         env:
