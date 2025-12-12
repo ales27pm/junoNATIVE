@@ -1,64 +1,40 @@
-name: iOS CI & Native Artifact Release
+name: iOS CI → TestFlight
 
 on:
   push:
-    branches:
-      - main
-    tags:
-      - "ios-v*"
-  workflow_dispatch:
+    branches: [main]     # change if you release from another branch
+  workflow_dispatch:     # allow manual runs
 
 jobs:
-  build-and-release-ios:
-    runs-on: macos-14
+  ios-release:
+    runs-on: macos-14-arm64      # Apple Silicon runner, fastest for RN pods
+    timeout-minutes: 60
 
-    env:
-      # Fastlane / code signing envs (read from GitHub Secrets)
-      APPLE_ID: ${{ secrets.APPLE_ID }}                         # e.g. ios-team@pulsr.co.uk
-      APP_IDENTIFIER: ${{ secrets.APP_IDENTIFIER }}             # e.g. com.pulsr.junonative
-      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}               # e.g. 123456789A
-      IOS_OUTPUT_NAME: JunoNative.ipa
-
-      # App Store Connect API key pieces
-      APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APPLE_KEY_ID }}         # Key ID from ASC
-      APP_STORE_CONNECT_API_ISSUER_ID: ${{ secrets.APPLE_ISSUER_ID }}   # Issuer ID from ASC
-      APP_STORE_CONNECT_API_KEY_BASE64: ${{ secrets.APPLE_KEY_BASE64 }} # base64 of .p8 file
-
-      # Distribution certificate (p12) as base64 and its password
-      IOS_DIST_CERT_BASE64: ${{ secrets.IOS_DIST_CERT_BASE64 }}
-      IOS_DIST_CERT_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
-
-      # Optional: numeric App Store app id (used by upload_to_testflight)
-      APP_APPLE_ID: ${{ secrets.APP_APPLE_ID }}
+    env:                         # ✨ ALL secrets come from GitHub-Actions secrets
+      APPLE_ID:                      ${{ secrets.APPLE_ID }}
+      APP_IDENTIFIER:                ${{ secrets.APP_IDENTIFIER }}
+      APPLE_TEAM_ID:                 ${{ secrets.APPLE_TEAM_ID }}
+      APP_STORE_CONNECT_API_KEY_ID:  ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+      APP_STORE_CONNECT_API_ISSUER_ID:  ${{ secrets.APP_STORE_CONNECT_API_ISSUER_ID }}
+      APP_STORE_CONNECT_API_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_API_KEY_BASE64 }}
+      IOS_DIST_CERT_BASE64:          ${{ secrets.IOS_DIST_CERT_BASE64 }}
+      IOS_DIST_CERT_PASSWORD:        ${{ secrets.IOS_DIST_CERT_PASSWORD }}
+      # optional / nice-to-have
+      APP_APPLE_ID:                  ${{ secrets.APP_APPLE_ID }}
 
     steps:
-      - name: 🧾 Checkout code
+      - name: Checkout repo
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
-      - name: 🧱 Setup Ruby
+      - name: Set up Ruby 3.3 + Bundler cache
         uses: ruby/setup-ruby@v1
         with:
           ruby-version: '3.3'
-          bundler-cache: true
+          bundler-cache: true            # Gemfile.lock drives the cache
 
-      - name: 🟦 Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
+      - name: Run iOS CI lane (fastlane ios_ci)
+        run: bundle exec fastlane ios_ci
 
-      - name: 📦 Install Node dependencies
-        run: |
-          npm ci
-
-      - name: 💎 Install Ruby gems (fastlane, cocoapods, etc.)
-        run: |
-          bundle install --path vendor/bundle
-
-      - name: 🔧 Show Xcode version
-        run: |
-          xcodebuild -version
-          xcode-select -p
-
-      - name: 🚀 Run Fastlane iOS CI lane
-        run: |
-          bundle exec fastlane ios ios_ci
+      # ⬆️  if the lane completes, your build is already uploaded to TF
