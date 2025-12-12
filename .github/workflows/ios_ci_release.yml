@@ -23,7 +23,7 @@ jobs:
 
       # Distribution cert (.p12 → base64) + pass-phrase
       IOS_DIST_CERT_BASE64:  ${{ secrets.DIST_CERT_BASE64 }}
-      IOS_DIST_CERT_PASSWORD:${{ secrets.DIST_CERT_PASSWORD }}
+      IOS_DIST_CERT_PASSWORD:  ${{ secrets.DIST_CERT_PASSWORD }}
 
       # Fastlane output paths
       LC_ALL: en_US.UTF-8
