@@ -24,9 +24,10 @@ jobs:
 
       # --- App Store Connect API key (these MUST be set as GitHub secrets) ---
       # Use the SAME secret names you used in the verify_appstore_connect workflow
-      APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
-      APP_STORE_CONNECT_API_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_API_ISSUER_ID }}
-      APP_STORE_CONNECT_API_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_API_KEY_BASE64 }}
+    env:
+      APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APPLE_KEY_ID }}
+      APP_STORE_CONNECT_API_KEY_ISSUER_ID: ${{ secrets.APPLE_ISSUER_ID }}
+      APP_STORE_CONNECT_API_KEY_BASE64: ${{ secrets.APPLE_KEY_BASE64 }}
 
       # --- Distribution certificate (.p12) ---
       IOS_DIST_CERT_BASE64: ${{ secrets.IOS_DIST_CERT_BASE64 }}
