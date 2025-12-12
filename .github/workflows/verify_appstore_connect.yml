@@ -1,257 +1,39 @@
-# fastlane/Fastfile
-require "plist"
+# .github/workflows/verify_appstore_connect.yml
+name: Verify App Store Connect signing chain
 
-default_platform(:ios)
+on:
+  # Run on demand from the Actions tab
+  workflow_dispatch:
 
-ROOT_DIR = File.expand_path("..", __dir__)
-ENV["SPACESHIP_CONNECT_API_IN_HOUSE"] ||= "false"
+jobs:
+  verify:
+    runs-on: macos-14
 
-# -------------------------------------------------
-# 🔑  Helper: build ASC API-key hash from env vars
-# -------------------------------------------------
-def app_store_api_key_hash
-  api_key_id = ENV["APP_STORE_CONNECT_API_KEY_ID"]
-  issuer_id  = ENV["APP_STORE_CONNECT_API_ISSUER_ID"] || ENV["APP_STORE_CONNECT_API_KEY_ISSUER_ID"]
-  key_base64 = ENV["APP_STORE_CONNECT_API_KEY_BASE64"]
-  raw_key    = ENV["APP_STORE_CONNECT_API_KEY"]
+    steps:
+      # 1 ▪︎ Checkout the repo
+      - name: Checkout
+        uses: actions/checkout@v4
 
-  UI.user_error!("APP_STORE_CONNECT_API_KEY_ID and APP_STORE_CONNECT_API_ISSUER_ID must be set") if api_key_id.to_s.strip.empty? || issuer_id.to_s.strip.empty?
-  UI.user_error!("Either APP_STORE_CONNECT_API_KEY_BASE64 or APP_STORE_CONNECT_API_KEY must be set") if key_base64.to_s.strip.empty? && raw_key.to_s.strip.empty?
+      # 2 ▪︎ Set up Ruby (Fastlane needs it)
+      - name: Set up Ruby 3.3 with bundler cache
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+          bundler-cache: true   # ⇦ speeds up subsequent runs
 
-  require "base64"
-  {
-    key_id:    api_key_id,
-    issuer_id: issuer_id,
-    key:       key_base64.to_s.strip.empty? ? raw_key : Base64.decode64(key_base64),
-    in_house:  false
-  }
-end
+      # 3 ▪︎ Install any extra Ruby gems (Fastlane is already in the Gemfile)
+      - name: Bundle install
+        run: bundle install --path vendor/bundle
 
-# -------------------------------------------------
-# 📦  Shared Xcode build options
-# -------------------------------------------------
-def ios_build_options
-  workspace_path = File.join(ROOT_DIR, "ios", "JunoNative.xcworkspace")
-  project_path   = File.join(ROOT_DIR, "ios", "JunoNative.xcodeproj")
-
-  has_workspace = File.exist?(workspace_path)
-  has_project   = File.exist?(project_path)
-
-  ui_err = "Neither #{workspace_path} nor #{project_path} exists. Check your repo structure and CocoaPods installation."
-  UI.user_error!(ui_err) unless has_workspace || has_project
-
-  export_options_plist = File.join(ROOT_DIR, "ios", "exportOptions.plist")
-  UI.user_error!("exportOptions.plist not found at #{export_options_plist}") unless File.exist?(export_options_plist)
-
-  plist_export_options = Plist.parse_xml(export_options_plist) || {}
-  plist_export_options["teamID"] = ENV["APPLE_TEAM_ID"] unless ENV["APPLE_TEAM_ID"].to_s.strip.empty?
-
-  profile_name   = ENV["IOS_PROVISIONING_PROFILE_NAME"]
-  app_identifier = ENV["APP_IDENTIFIER"]
-
-  if profile_name.to_s.strip.empty?
-    plist_export_options["signingStyle"] = "automatic"
-  elsif app_identifier.to_s.strip.empty?
-    UI.user_error!("IOS_PROVISIONING_PROFILE_NAME was provided but APP_IDENTIFIER is missing")
-  else
-    plist_export_options["provisioningProfiles"] ||= {}
-    plist_export_options["provisioningProfiles"][app_identifier] = profile_name
-    plist_export_options["signingStyle"] = "manual"
-  end
-
-  {
-    workspace:         has_workspace ? workspace_path : nil,
-    project:           has_workspace ? nil            : project_path,
-    scheme:            "JunoNative",
-    configuration:     "Release",
-    clean:             true,
-    output_directory:  File.join(ROOT_DIR, "fastlane", "build", "ios"),
-    output_name:       ENV["IOS_OUTPUT_NAME"] || "JunoNative.ipa",
-    silent:            false,
-    skip_package_ipa:  false,
-    skip_package_pkg:  true,
-    include_symbols:   true,
-    include_bitcode:   false,
-    export_options:    plist_export_options,
-    skip_profile_detection: false,
-    result_bundle:     true,
-    buildlog_path:     File.join(ROOT_DIR, "fastlane", "logs"),
-    export_xcargs:     "DEVELOPMENT_TEAM=#{ENV['APPLE_TEAM_ID']}"
-  }.compact
-end
-
-# =================================================
-# 🚀  Lanes
-# =================================================
-platform :ios do
-  # ---------- Utility / preparation ----------
-  desc "Run unit tests for the Juno DSP core via CMake/CTest"
-  lane :dsp_tests do
-    sh("cmake -S . -B fastlane/build/cmake -DCMAKE_BUILD_TYPE=Debug")
-    sh("cmake --build fastlane/build/cmake --config Debug --target juno_tests")
-    sh("ctest --test-dir fastlane/build/cmake --output-on-failure")
-  end
-
-  desc "Compile the C++ DSP engine"
-  lane :compile_dsp_engine do
-    project_root = ROOT_DIR
-    build_dir    = File.join(project_root, "fastlane", "build", "cmake")
-    sh("cmake -S #{project_root} -B #{build_dir} -DCMAKE_BUILD_TYPE=Release")
-    sh("cmake --build #{build_dir} --config Release")
-  end
-
-  desc "Compile React-Native TurboModules"
-  lane :compile_turbo_modules do
-    script_path = File.join(ROOT_DIR, "scripts", "compile-turbo-modules.sh")
-    UI.user_error!("TurboModules script not found at #{script_path}") unless File.exist?(script_path)
-    sh("bash #{script_path}")
-  end
-
-  private_lane :install_cocoapods do
-    ios_dir = File.join(ROOT_DIR, "ios")
-    podfile = File.join(ios_dir, "Podfile")
-    UI.user_error!("Podfile not found at #{podfile}") unless File.exist?(podfile)
-    Dir.chdir(ios_dir) { sh("bundle exec pod install --repo-update") }
-  end
-
-  private_lane :prepare_build_assets do
-    compile_dsp_engine
-    compile_turbo_modules
-  end
-
-  private_lane :compile_swift_sources do
-    workspace_path = File.join(ROOT_DIR, "ios", "JunoNative.xcworkspace")
-    project_path   = File.join(ROOT_DIR, "ios", "JunoNative.xcodeproj")
-
-    xcpretty_available = system("which xcpretty >/dev/null 2>&1")
-    formatter_suffix   = xcpretty_available ? " | xcpretty --no-color" : ""
-
-    if File.exist?(workspace_path)
-      sh(%Q[
-        set -o pipefail && xcodebuild \
-          -workspace "#{workspace_path}" \
-          -scheme JunoNative \
-          -configuration Release \
-          -sdk iphoneos \
-          -destination 'generic/platform=iOS' \
-          CODE_SIGNING_ALLOWED=NO \
-          build#{formatter_suffix}
-      ])
-    elsif File.exist?(project_path)
-      sh(%Q[
-        set -o pipefail && xcodebuild \
-          -project "#{project_path}" \
-          -scheme JunoNative \
-          -configuration Release \
-          -sdk iphoneos \
-          -destination 'generic/platform=iOS' \
-          CODE_SIGNING_ALLOWED=NO \
-          build#{formatter_suffix}
-      ])
-    else
-      UI.user_error!("Neither workspace nor project found")
-    end
-  end
-
-  # ---------- Local build ----------
-  desc "Local build for iOS (no upload)"
-  lane :build do
-    prepare_build_assets
-    install_cocoapods
-    compile_swift_sources
-    build_app(ios_build_options)
-  end
-
-  # -------------------------------------------------
-  # 🔍  Verification lane (API key + p12 + profile)
-  # -------------------------------------------------
-  desc "Verify App Store Connect credentials, p12, and provisioning profile (no build)"
-  lane :verify_appstore_connect do
-    UI.header("🔍 Verifying App Store Connect credentials & signing chain")
-
-    %w[APPLE_ID APP_IDENTIFIER APPLE_TEAM_ID APP_STORE_CONNECT_API_KEY_ID APP_STORE_CONNECT_API_ISSUER_ID APP_STORE_CONNECT_API_KEY_BASE64 IOS_DIST_CERT_BASE64 IOS_DIST_CERT_PASSWORD].each do |v|
-      UI.user_error!("Missing #{v}") if ENV[v].to_s.strip.empty?
-    end
-
-    # 1) ASC handshake
-    api_key = app_store_api_key_hash
-    require "spaceship"
-    token = Spaceship::ConnectAPI::Token.create(**api_key)
-    Spaceship::ConnectAPI.token = token
-    apps = Spaceship::ConnectAPI::App.all
-    UI.success("✅ Authenticated. #{apps.size} apps found.")
-    if (bundle = ENV["APP_IDENTIFIER"]).to_s.strip != "" && (app = apps.find { |a| a.bundle_id == bundle })
-      UI.success("✅ Found app #{app.name} (#{bundle})")
-    end
-
-    # 2) Validate p12
-    require "base64"; require "tempfile"
-    decoded = Base64.decode64(ENV["IOS_DIST_CERT_BASE64"])
-    Tempfile.create(%w[dist .p12]) do |tmp|
-      tmp.binmode; tmp.write(decoded); tmp.flush
-      sh("openssl pkcs12 -in '#{tmp.path}' -nokeys -passin pass:#{ENV['IOS_DIST_CERT_PASSWORD']} -info >/dev/null 2>&1")
-      import_certificate(
-        certificate_path:     tmp.path,
-        certificate_password: ENV["IOS_DIST_CERT_PASSWORD"]
-      )
-    end
-    UI.success("✅ p12 valid and imported.")
-
-    # 3) Provisioning profile
-    profile_path = sigh(
-      app_identifier: ENV["APP_IDENTIFIER"],
-      api_key:        api_key,
-      adhoc:          false,
-      readonly:       false,
-      skip_install:   true
-    )
-    # SharedValues::SIGH_PROFILE_NAME was removed; use path directly
-    profile_name = File.basename(profile_path, ".mobileprovision")
-    UI.success("✅ Provisioning profile retrieved: #{profile_name}")
-    UI.success("🎉 Verification completed.")
-  end
-
-  # ---------- CI lane ----------
-  desc "CI lane: build iOS app and upload to TestFlight"
-  lane :ios_ci do
-    prepare_build_assets
-    install_cocoapods
-    compile_swift_sources
-
-    api_key = app_store_api_key_hash
-
-    profile_path = sigh(
-      app_identifier: ENV["APP_IDENTIFIER"],
-      api_key:        api_key,
-      adhoc:          false,
-      readonly:       false
-    )
-    ENV["IOS_PROVISIONING_PROFILE_NAME"] = File.basename(profile_path, ".mobileprovision")
-
-    require "base64"; require "tempfile"
-    Tempfile.create(%w[dist .p12]) do |tmp|
-      tmp.binmode; tmp.write(Base64.decode64(ENV["IOS_DIST_CERT_BASE64"])); tmp.flush
-      import_certificate(
-        certificate_path:     tmp.path,
-        certificate_password: ENV["IOS_DIST_CERT_PASSWORD"]
-      )
-    end
-
-    build_app(ios_build_options)
-
-    upload_to_testflight(
-      api_key:        api_key,
-      app_identifier: ENV["APP_IDENTIFIER"],
-      team_id:        ENV["APPLE_TEAM_ID"],
-      apple_id:       ENV["APP_APPLE_ID"].to_s.strip.empty? ? nil : ENV["APP_APPLE_ID"],
-      skip_waiting_for_build_processing: false,
-      distribute_external:              false,
-      beta_app_review_info: {
-        contact_email:  ENV["APPLE_ID"],
-        contact_first_name: "Alexis",
-        contact_last_name:  "Boulet",
-        notes:              "JunoNative CI build"
-      }
-    )
-  end
-end
+      # 4 ▪︎ Run your Fastlane verification lane
+      - name: 🔍 Run verify_appstore_connect
+        env:
+          APPLE_ID:                         ${{ secrets.APPLE_ID }}
+          APP_IDENTIFIER:                   ${{ secrets.APP_IDENTIFIER }}
+          APPLE_TEAM_ID:                    ${{ secrets.APPLE_TEAM_ID }}
+          APP_STORE_CONNECT_API_KEY_ID:     ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          APP_STORE_CONNECT_API_ISSUER_ID:  ${{ secrets.APP_STORE_CONNECT_API_ISSUER_ID }}
+          APP_STORE_CONNECT_API_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_API_KEY_BASE64 }}
+          IOS_DIST_CERT_BASE64:             ${{ secrets.IOS_DIST_CERT_BASE64 }}
+          IOS_DIST_CERT_PASSWORD:           ${{ secrets.IOS_DIST_CERT_PASSWORD }}
+        run: bundle exec fastlane ios verify_appstore_connect
