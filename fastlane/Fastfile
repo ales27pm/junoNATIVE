@@ -1,5 +1,3 @@
-# fastlane/Fastfile
-
 default_platform(:ios)
 
 require "tmpdir"
@@ -26,8 +24,8 @@ end
 #   APP_STORE_CONNECT_API_KEY (raw .p8 content)
 # - or APPLE_KEY_ID / APPLE_ISSUER_ID / APPLE_KEY (raw .p8)
 def resolve_asc_config
-  key_id = ENV["APP_STORE_CONNECT_API_KEY_ID"] || ENV["APPLE_KEY_ID"]
-  issuer_id = ENV["APP_STORE_CONNECT_API_KEY_ISSUER_ID"] || ENV["APPLE_ISSUER_ID"]
+  key_id    = ENV["APP_STORE_CONNECT_API_KEY_ID"]         || ENV["APPLE_KEY_ID"]
+  issuer_id = ENV["APP_STORE_CONNECT_API_KEY_ISSUER_ID"]  || ENV["APPLE_ISSUER_ID"]
 
   key_base64 = ENV["APP_STORE_CONNECT_API_KEY_BASE64"]
   key_raw    = ENV["APP_STORE_CONNECT_API_KEY"] || ENV["APPLE_KEY"]
@@ -70,9 +68,17 @@ platform :ios do
   lane :ios_ci do
     UI.header("🚀 JunoNative iOS CI")
 
+    # 1) Verify ASC, certs, profiles and stash the api_key in lane_context
     verify_appstore_connect
+
+    # Grab the api_key produced by verify_appstore_connect
+    asc_api_key = Actions.lane_context[:ASC_API_KEY]
+
+    # 2) Build native assets and pods
     prepare_build_assets
     install_cocoapods
+
+    # 3) Preflight compile (no signing, just "does it build?")
     compile_swift_sources
 
     UI.message("📦 Building archive + IPA with gym")
@@ -86,6 +92,7 @@ platform :ios do
 
       # Signing/export
       export_method: "app-store", # let gym generate exportOptionsPlist itself
+      api_key: asc_api_key,       # reuse the same ASC key for gym
 
       # Output
       output_directory: File.join("fastlane", "build", "ios"),
@@ -109,6 +116,7 @@ platform :ios do
 
     upload_to_testflight(
       ipa: ipa_path,
+      api_key: asc_api_key,
       skip_waiting_for_build_processing: true,
       distribute_external: false,
       groups: ["Internal Testers"]
@@ -144,6 +152,9 @@ platform :ios do
       key_content: asc_cfg[:key_content]
     )
 
+    # Make api_key available to other lanes
+    Actions.lane_context[:ASC_API_KEY] = api_key
+
     # Quick sanity: list apps to prove credentials work
     apps = Spaceship::ConnectAPI::App.all(client: api_key)
     UI.success("✅ Authenticated — #{apps.count} apps in this account")
@@ -169,7 +180,7 @@ platform :ios do
     UI.success("✅ p12 structure and password are valid")
 
     # ---- Create / configure keychain & import cert ----
-    keychain_name = "ios-build.keychain-db"
+    keychain_name     = "ios-build.keychain-db"
     keychain_password = ENV["KEYCHAIN_PASSWORD"].to_s.empty? ? "fastlane_ci_temp" : ENV["KEYCHAIN_PASSWORD"]
 
     UI.message("🔐 Creating CI keychain #{keychain_name}")
@@ -189,7 +200,7 @@ platform :ios do
       keychain_name: keychain_name
     )
 
-    ENV["MATCH_KEYCHAIN_NAME"] = keychain_name
+    ENV["MATCH_KEYCHAIN_NAME"]     = keychain_name
     ENV["MATCH_KEYCHAIN_PASSWORD"] = keychain_password
 
     # ---- Provisioning profile via sigh ----
@@ -290,7 +301,7 @@ platform :ios do
     xcpretty = system("which xcpretty >/dev/null 2>&1")
     pretty   = xcpretty ? " | xcpretty --no-color" : ""
 
-    # 🔑 IMPORTANT:
+    # IMPORTANT:
     # - We *disable* signing here so Pods static libraries don't try to sign
     #   with an "empty identity".
     # - Real signing is done later by `build_app` / gym during archive.
