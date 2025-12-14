@@ -2,6 +2,8 @@ default_platform(:ios)
 
 require "tmpdir"
 require "base64"
+require "fileutils"
+require "json"
 
 # Root of the repo (Fastfile lives in fastlane/)
 ROOT_DIR = File.expand_path("..", __dir__)
@@ -23,14 +25,31 @@ end
 # - or APP_STORE_CONNECT_API_KEY_ID / APP_STORE_CONNECT_API_KEY_ISSUER_ID /
 #   APP_STORE_CONNECT_API_KEY (raw .p8 content)
 # - or APPLE_KEY_ID / APPLE_ISSUER_ID / APPLE_KEY (raw .p8)
+#
+# IMPORTANT:
+# Ruby empty strings are truthy, so we must explicitly check .empty? for fallback.
 def resolve_asc_config
-  key_id    = ENV["APP_STORE_CONNECT_API_KEY_ID"]         || ENV["APPLE_KEY_ID"]
-  issuer_id = ENV["APP_STORE_CONNECT_API_KEY_ISSUER_ID"]  || ENV["APPLE_ISSUER_ID"]
+  raw_key_id    = ENV["APP_STORE_CONNECT_API_KEY_ID"].to_s
+  raw_issuer_id = ENV["APP_STORE_CONNECT_API_KEY_ISSUER_ID"].to_s
 
-  key_base64 = ENV["APP_STORE_CONNECT_API_KEY_BASE64"]
-  key_raw    = ENV["APP_STORE_CONNECT_API_KEY"] || ENV["APPLE_KEY"]
+  key_id =
+    if raw_key_id.empty?
+      ENV["APPLE_KEY_ID"].to_s
+    else
+      raw_key_id
+    end
 
-  if key_id.to_s.empty? || issuer_id.to_s.empty?
+  issuer_id =
+    if raw_issuer_id.empty?
+      ENV["APPLE_ISSUER_ID"].to_s
+    else
+      raw_issuer_id
+    end
+
+  key_base64 = ENV["APP_STORE_CONNECT_API_KEY_BASE64"].to_s
+  key_raw    = (ENV["APP_STORE_CONNECT_API_KEY"].to_s.empty? ? ENV["APPLE_KEY"].to_s : ENV["APP_STORE_CONNECT_API_KEY"].to_s)
+
+  if key_id.empty? || issuer_id.empty?
     UI.user_error!("Missing ASC key id / issuer id. Provide either:
       - APP_STORE_CONNECT_API_KEY_ID and APP_STORE_CONNECT_API_KEY_ISSUER_ID
       or
@@ -38,7 +57,7 @@ def resolve_asc_config
     )
   end
 
-  if key_base64.to_s.empty? && key_raw.to_s.empty?
+  if key_base64.empty? && key_raw.empty?
     UI.user_error!("Missing ASC private key. Provide either:
       - APP_STORE_CONNECT_API_KEY_BASE64 (base64-encoded .p8 contents)
       or
@@ -47,7 +66,7 @@ def resolve_asc_config
   end
 
   key_content =
-    if !key_base64.to_s.empty?
+    if !key_base64.empty?
       Base64.decode64(key_base64)
     else
       key_raw
@@ -149,24 +168,19 @@ platform :ios do
     api_key = app_store_connect_api_key(
       key_id: asc_cfg[:key_id],
       issuer_id: asc_cfg[:issuer_id],
-      key_content: asc_cfg[:key_content]
+      key_content: asc_cfg[:key_content],
+      set_spaceship_token: true
     )
 
     # Make api_key available to other lanes
     Actions.lane_context[:ASC_API_KEY] = api_key
 
-    # Quick sanity: list apps to prove credentials work
-    apps = Spaceship::ConnectAPI::App.all(client: api_key)
-    UI.success("✅ Authenticated — #{apps.count} apps in this account")
-
+    # Quick sanity: fetch app by bundle id (no full listing; deterministic)
     app_identifier = ENV["APP_IDENTIFIER"]
-    app = apps.find { |a| a.bundle_id == app_identifier }
+    app = Spaceship::ConnectAPI::App.find(app_identifier)
 
-    if app.nil?
-      UI.user_error!("App with identifier #{app_identifier} not found in this ASC account")
-    else
-      UI.success("✅ Found app #{app.name} (#{app.bundle_id})")
-    end
+    UI.user_error!("App with identifier #{app_identifier} not found in this ASC account") if app.nil?
+    UI.success("✅ Authenticated — Found app #{app.name} (#{app.bundle_id})")
 
     # ---- Decode and verify .p12 ----
     UI.header("🔐 Verifying distribution certificate (.p12)")
@@ -256,7 +270,7 @@ platform :ios do
     UI.message("[codegen] :compile_turbo_modules has a successful, deterministic step.")
     UI.message("[codegen] =====================================================")
 
-    codegen_build_dir = File.join(ROOT_DIR, "fastlane", "fastlane", "build", "codegen")
+    codegen_build_dir = File.join(ROOT_DIR, "fastlane", "build", "codegen")
     FileUtils.mkdir_p(codegen_build_dir)
     UI.message("[codegen] Ensured codegen build directory exists at: #{codegen_build_dir}")
 
