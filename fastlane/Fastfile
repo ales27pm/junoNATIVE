@@ -7,7 +7,6 @@ require "base64"
 require "fileutils"
 require "json"
 
-# Root of the repo (Fastfile lives in fastlane/)
 ROOT_DIR = File.expand_path("..", __dir__)
 
 ############################################################
@@ -16,20 +15,9 @@ ROOT_DIR = File.expand_path("..", __dir__)
 
 def ensure_env!(vars)
   missing = vars.select { |v| ENV[v].to_s.empty? }
-  unless missing.empty?
-    UI.user_error!("Missing required environment variables: #{missing.join(", ")}")
-  end
+  UI.user_error!("Missing required environment variables: #{missing.join(", ")}") unless missing.empty?
 end
 
-# Resolve App Store Connect API key from multiple possible env layouts:
-# - APP_STORE_CONNECT_API_KEY_ID / APP_STORE_CONNECT_API_KEY_ISSUER_ID /
-#   APP_STORE_CONNECT_API_KEY_BASE64 (base64 of .p8)
-# - or APP_STORE_CONNECT_API_KEY_ID / APP_STORE_CONNECT_API_KEY_ISSUER_ID /
-#   APP_STORE_CONNECT_API_KEY (raw .p8 content)
-# - or APPLE_KEY_ID / APPLE_ISSUER_ID / APPLE_KEY (raw .p8)
-#
-# IMPORTANT:
-# Ruby empty strings are truthy, so we must explicitly check .empty? for fallback.
 def resolve_asc_config
   raw_key_id    = ENV["APP_STORE_CONNECT_API_KEY_ID"].to_s
   raw_issuer_id = ENV["APP_STORE_CONNECT_API_KEY_ISSUER_ID"].to_s
@@ -55,16 +43,14 @@ def resolve_asc_config
     UI.user_error!("Missing ASC key id / issuer id. Provide either:
       - APP_STORE_CONNECT_API_KEY_ID and APP_STORE_CONNECT_API_KEY_ISSUER_ID
       or
-      - APPLE_KEY_ID and APPLE_ISSUER_ID (which map to the same values)."
-    )
+      - APPLE_KEY_ID and APPLE_ISSUER_ID.")
   end
 
   if key_base64.empty? && key_raw.empty?
     UI.user_error!("Missing ASC private key. Provide either:
       - APP_STORE_CONNECT_API_KEY_BASE64 (base64-encoded .p8 contents)
       or
-      - APP_STORE_CONNECT_API_KEY / APPLE_KEY (raw .p8 contents)."
-    )
+      - APP_STORE_CONNECT_API_KEY / APPLE_KEY (raw .p8 contents).")
   end
 
   key_content =
@@ -74,14 +60,9 @@ def resolve_asc_config
       key_raw
     end
 
-  {
-    key_id: key_id,
-    issuer_id: issuer_id,
-    key_content: key_content
-  }
+  { key_id: key_id, issuer_id: issuer_id, key_content: key_content }
 end
 
-# Install provisioning profile from base64 secret, return {uuid:, name:, team_id:, app_id:}
 def install_profile_from_base64!(profile_base64:, expected_team_id:, expected_bundle_id:)
   profiles_dir = File.expand_path("~/Library/MobileDevice/Provisioning Profiles")
   FileUtils.mkdir_p(profiles_dir)
@@ -90,7 +71,6 @@ def install_profile_from_base64!(profile_base64:, expected_team_id:, expected_bu
   File.binwrite(tmp_profile, Base64.decode64(profile_base64))
 
   decoded_plist = sh("security cms -D -i '#{tmp_profile}'", log: false)
-
   plist_path = File.join(Dir.tmpdir, "profile#{Process.pid}-#{Time.now.to_i}.plist")
   File.write(plist_path, decoded_plist)
 
@@ -99,12 +79,8 @@ def install_profile_from_base64!(profile_base64:, expected_team_id:, expected_bu
   team_id      = sh("/usr/libexec/PlistBuddy -c 'Print :TeamIdentifier:0' '#{plist_path}'", log: false).strip
   ent_app_id   = sh("/usr/libexec/PlistBuddy -c 'Print :Entitlements:application-identifier' '#{plist_path}'", log: false).strip
 
-  # Validate Team ID
-  unless team_id == expected_team_id
-    UI.user_error!("Provisioning profile TeamID mismatch. Profile=#{team_id}, Expected=#{expected_team_id}")
-  end
+  UI.user_error!("Provisioning profile TeamID mismatch. Profile=#{team_id}, Expected=#{expected_team_id}") unless team_id == expected_team_id
 
-  # ent_app_id looks like TEAMID.com.foo.bar or TEAMID.*
   unless ent_app_id.start_with?("#{expected_team_id}.")
     UI.user_error!("Provisioning profile entitlement app-id malformed or wrong team. app-id=#{ent_app_id}, Expected prefix=#{expected_team_id}.")
   end
@@ -120,37 +96,52 @@ def install_profile_from_base64!(profile_base64:, expected_team_id:, expected_bu
 
   UI.success("✅ Installed provisioning profile: #{profile_name} (#{profile_uuid})")
 
-  {
-    uuid: profile_uuid,
-    name: profile_name,
-    team_id: team_id,
-    app_id: ent_app_id
-  }
+  { uuid: profile_uuid, name: profile_name, team_id: team_id, app_id: ent_app_id }
+end
+
+def find_apple_distribution_identity!
+  out = sh("security find-identity -v -p codesigning", log: false)
+  # Example line: 1) XXXXX... "Apple Distribution: Name (TEAMID)"
+  line = out.lines.find { |l| l.include?("Apple Distribution:") && l.include?("\"") }
+  UI.user_error!("No 'Apple Distribution' signing identity found in keychain. Did certificate import succeed?") if line.nil?
+
+  m = line.match(/"([^"]+)"/)
+  UI.user_error!("Could not parse codesigning identity name from: #{line}") if m.nil?
+  m[1]
 end
 
 platform :ios do
   ############################################################
   # Main CI lane
   ############################################################
-  desc "CI pipeline: verify ASC, build DSP, pods, preflight build, archive + TestFlight"
+  desc "CI pipeline: verify ASC, certs, profile; build; archive; upload TestFlight"
   lane :ios_ci do
     UI.header("🚀 JunoNative iOS CI")
 
-    # 1) Verify ASC, certs, profile (no sigh) and stash api_key + profile metadata in lane_context
     verify_appstore_connect
 
     asc_api_key    = Actions.lane_context[:ASC_API_KEY]
     profile_name   = Actions.lane_context[:PROFILE_NAME]
     app_identifier = ENV["APP_IDENTIFIER"]
+    team_id        = ENV["APPLE_TEAM_ID"]
 
-    # 2) Build native assets and pods
     prepare_build_assets
     install_cocoapods
-
-    # 3) Preflight compile (no signing, just "does it build?")
     compile_swift_sources
 
     UI.message("📦 Building archive + IPA with gym")
+
+    codesign_identity = find_apple_distribution_identity!
+    UI.message("🔏 Using codesigning identity: #{codesign_identity}")
+
+    # IMPORTANT: override signing during ARCHIVE as well (not only export).
+    # This avoids Xcode trying to use "match Development ..." profiles from project settings.
+    signing_xcargs = [
+      "DEVELOPMENT_TEAM=#{team_id}",
+      "CODE_SIGN_STYLE=Manual",
+      "CODE_SIGN_IDENTITY=#{Shellwords.escape(codesign_identity)}",
+      "PROVISIONING_PROFILE_SPECIFIER=#{Shellwords.escape(profile_name)}"
+    ].join(" ")
 
     ios_build_options = {
       workspace: File.join("ios", "JunoNative.xcworkspace"),
@@ -159,36 +150,34 @@ platform :ios do
       sdk: "iphoneos",
       clean: true,
 
-      # Export/signing: deterministic manual signing using installed profile (no portal calls)
       export_method: "app-store",
       api_key: asc_api_key,
+
+      # Deterministic export
       skip_profile_detection: true,
       export_options: {
         signingStyle: "manual",
-        teamID: ENV["APPLE_TEAM_ID"],
+        teamID: team_id,
         provisioningProfiles: {
           app_identifier => profile_name
         }
       },
 
-      # Output
       output_directory: File.join("fastlane", "build", "ios"),
       output_name: "JunoNative.ipa",
 
-      # Helpful flags
       include_symbols: true,
       include_bitcode: false,
       silent: false,
 
-      # Pass team ID into xcodebuild
-      xcargs: "DEVELOPMENT_TEAM=#{ENV['APPLE_TEAM_ID']}"
+      # Force signing during archive
+      xcargs: signing_xcargs
     }
 
     ipa_path = build_app(ios_build_options)
     UI.success("✅ IPA built at #{ipa_path}")
 
     UI.message("🕊  Uploading to TestFlight")
-
     upload_to_testflight(
       ipa: ipa_path,
       api_key: asc_api_key,
@@ -201,22 +190,23 @@ platform :ios do
   end
 
   ############################################################
-  # 1. Verify ASC + cert + profile (NO sigh)
+  # Verify ASC + cert + profile (NO sigh)
   ############################################################
-  desc "Verify App Store Connect API key, distribution certificate and provisioning profile (installed from secret)"
+  desc "Verify ASC API key, import distribution cert, install provisioning profile (from secret)"
   private_lane :verify_appstore_connect do
     UI.header("🔍 Verifying ASC credentials, certificate & profile (no sigh)")
 
-    # Note: APPLE_ID is not required for ASC key auth or manual profile install.
     ensure_env!([
       "APPLE_TEAM_ID",
       "APP_IDENTIFIER",
+      "APP_STORE_CONNECT_API_KEY_ID",
+      "APP_STORE_CONNECT_API_KEY_ISSUER_ID",
+      "APP_STORE_CONNECT_API_KEY_BASE64",
       "IOS_DIST_CERT_BASE64",
       "IOS_DIST_CERT_PASSWORD",
       "IOS_PROFILE_BASE64"
     ])
 
-    # ---- ASC API key (flexible env resolution) ----
     UI.message("🔑 Resolving App Store Connect API key configuration")
     asc_cfg = resolve_asc_config
 
@@ -228,20 +218,18 @@ platform :ios do
       set_spaceship_token: true
     )
 
-    # Hard set as well (belt + suspenders)
-    Spaceship::ConnectAPI.token = api_key
-
+    # IMPORTANT:
+    # Do NOT do Spaceship::ConnectAPI.token = api_key here.
+    # api_key is a Hash; Spaceship expects a Token instance and will crash.
     Actions.lane_context[:ASC_API_KEY] = api_key
 
-    # Sanity: fetch app by bundle id (ASC API requires filter)
+    # Sanity check: fetch app by bundle id using ASC-compatible filter
     app_identifier = ENV["APP_IDENTIFIER"]
     apps = Spaceship::ConnectAPI::App.all(filter: { bundleId: app_identifier })
     app = apps.first
-
     UI.user_error!("App with identifier #{app_identifier} not found in this ASC account") if app.nil?
     UI.success("✅ Authenticated — Found app #{app.name} (#{app.bundle_id})")
 
-    # ---- Decode and verify .p12 ----
     UI.header("🔐 Verifying distribution certificate (.p12)")
 
     tmp_p12 = File.join(Dir.tmpdir, "dist#{Process.pid}-#{Time.now.to_i}.p12")
@@ -251,7 +239,6 @@ platform :ios do
     sh("openssl pkcs12 -in '#{tmp_p12}' -nokeys -passin pass:#{ENV['IOS_DIST_CERT_PASSWORD']} -info >/dev/null 2>&1")
     UI.success("✅ p12 structure and password are valid")
 
-    # ---- Create / configure keychain & import cert ----
     keychain_name     = "ios-build.keychain-db"
     keychain_password = ENV["KEYCHAIN_PASSWORD"].to_s.empty? ? "fastlane_ci_temp" : ENV["KEYCHAIN_PASSWORD"]
 
@@ -275,7 +262,6 @@ platform :ios do
     ENV["MATCH_KEYCHAIN_NAME"]     = keychain_name
     ENV["MATCH_KEYCHAIN_PASSWORD"] = keychain_password
 
-    # ---- Install provisioning profile from secret (no sigh, no portal) ----
     UI.header("🧾 Installing provisioning profile from IOS_PROFILE_BASE64")
 
     profile_meta = install_profile_from_base64!(
@@ -291,7 +277,7 @@ platform :ios do
   end
 
   ############################################################
-  # 2. Build DSP core (CMake)
+  # Build DSP core (CMake)
   ############################################################
   desc "Compile the C++ DSP engine via CMake"
   private_lane :compile_dsp_engine do
@@ -305,29 +291,21 @@ platform :ios do
   end
 
   ############################################################
-  # 3. TurboModules / codegen placeholder (deterministic)
+  # TurboModules / codegen placeholder (deterministic)
   ############################################################
-  desc "Compile TurboModules / Fabric – delegated to RN Xcode build phases, but we keep a deterministic step in CI"
+  desc "Compile TurboModules / Fabric – delegated to RN Xcode build phases; keep deterministic CI step"
   private_lane :compile_turbo_modules do
     UI.header("⚙️  TurboModules / Fabric codegen stub")
 
-    UI.message("[codegen] =====================================================")
-    UI.message("[codegen] TurboModule / Fabric codegen is handled by React Native's")
-    UI.message("[codegen] own Xcode/Pods build phases.")
-    UI.message("[codegen] Skipping standalone codegen step in CI.")
-    UI.message("[codegen] This script exists only so the Fastlane lane")
-    UI.message("[codegen] :compile_turbo_modules has a successful, deterministic step.")
-    UI.message("[codegen] =====================================================")
-
     codegen_build_dir = File.join(ROOT_DIR, "fastlane", "build", "codegen")
     FileUtils.mkdir_p(codegen_build_dir)
-    UI.message("[codegen] Ensured codegen build directory exists at: #{codegen_build_dir}")
+    UI.message("[codegen] ensured directory: #{codegen_build_dir}")
 
     UI.success("✅ TurboModules stub completed")
   end
 
   ############################################################
-  # 4. Prepare build assets (DSP + codegen)
+  # Prepare build assets
   ############################################################
   desc "Prepare build assets: DSP engine + TurboModules / codegen"
   private_lane :prepare_build_assets do
@@ -337,7 +315,7 @@ platform :ios do
   end
 
   ############################################################
-  # 5. CocoaPods install
+  # CocoaPods install
   ############################################################
   desc "Install CocoaPods dependencies with repo update"
   private_lane :install_cocoapods do
@@ -352,7 +330,7 @@ platform :ios do
   end
 
   ############################################################
-  # 6. Preflight Swift / RN build (no signing)
+  # Preflight build (no signing)
   ############################################################
   desc "Preflight compile of Swift / RN sources for device (no signing)"
   private_lane :compile_swift_sources do
@@ -364,7 +342,6 @@ platform :ios do
     xcpretty = system("which xcpretty >/dev/null 2>&1")
     pretty   = xcpretty ? " | xcpretty --no-color" : ""
 
-    # Disable signing here; real signing is done by gym during archive/export.
     common_flags = 'CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=""'
 
     cmd =
