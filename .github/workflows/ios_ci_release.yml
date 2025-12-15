@@ -27,6 +27,8 @@ jobs:
       APP_STORE_CONNECT_API_KEY_ID:     ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
       APP_STORE_CONNECT_API_KEY_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ISSUER_ID }}
       APP_STORE_CONNECT_API_KEY_BASE64:  ${{ secrets.APP_STORE_CONNECT_API_KEY_BASE64 }}
+      IOS_PROFILE_BASE64: ${{ secrets.IOS_PROFILE_BASE64 }}
+
 
       # --- Distribution certificate (.p12) ---
       IOS_DIST_CERT_BASE64: ${{ secrets.IOS_DIST_CERT_BASE64 }}
