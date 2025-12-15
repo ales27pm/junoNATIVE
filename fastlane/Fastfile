@@ -139,8 +139,8 @@ platform :ios do
     # 1) Verify ASC, certs, profile (no sigh) and stash api_key + profile metadata in lane_context
     verify_appstore_connect
 
-    asc_api_key   = Actions.lane_context[:ASC_API_KEY]
-    profile_name  = Actions.lane_context[:PROFILE_NAME]
+    asc_api_key    = Actions.lane_context[:ASC_API_KEY]
+    profile_name   = Actions.lane_context[:PROFILE_NAME]
     app_identifier = ENV["APP_IDENTIFIER"]
 
     # 2) Build native assets and pods
@@ -233,7 +233,7 @@ platform :ios do
 
     Actions.lane_context[:ASC_API_KEY] = api_key
 
-    # Sanity: fetch app by bundle id (ASC API requires filter, not App.find(string))
+    # Sanity: fetch app by bundle id (ASC API requires filter)
     app_identifier = ENV["APP_IDENTIFIER"]
     apps = Spaceship::ConnectAPI::App.all(filter: { bundleId: app_identifier })
     app = apps.first
