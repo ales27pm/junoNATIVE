@@ -1,3 +1,5 @@
+# fastlane/Fastfile
+
 default_platform(:ios)
 
 require "tmpdir"
@@ -79,6 +81,53 @@ def resolve_asc_config
   }
 end
 
+# Install provisioning profile from base64 secret, return {uuid:, name:, team_id:, app_id:}
+def install_profile_from_base64!(profile_base64:, expected_team_id:, expected_bundle_id:)
+  profiles_dir = File.expand_path("~/Library/MobileDevice/Provisioning Profiles")
+  FileUtils.mkdir_p(profiles_dir)
+
+  tmp_profile = File.join(Dir.tmpdir, "profile#{Process.pid}-#{Time.now.to_i}.mobileprovision")
+  File.binwrite(tmp_profile, Base64.decode64(profile_base64))
+
+  decoded_plist = sh("security cms -D -i '#{tmp_profile}'", log: false)
+
+  plist_path = File.join(Dir.tmpdir, "profile#{Process.pid}-#{Time.now.to_i}.plist")
+  File.write(plist_path, decoded_plist)
+
+  profile_uuid = sh("/usr/libexec/PlistBuddy -c 'Print :UUID' '#{plist_path}'", log: false).strip
+  profile_name = sh("/usr/libexec/PlistBuddy -c 'Print :Name' '#{plist_path}'", log: false).strip
+  team_id      = sh("/usr/libexec/PlistBuddy -c 'Print :TeamIdentifier:0' '#{plist_path}'", log: false).strip
+  ent_app_id   = sh("/usr/libexec/PlistBuddy -c 'Print :Entitlements:application-identifier' '#{plist_path}'", log: false).strip
+
+  # Validate Team ID
+  unless team_id == expected_team_id
+    UI.user_error!("Provisioning profile TeamID mismatch. Profile=#{team_id}, Expected=#{expected_team_id}")
+  end
+
+  # ent_app_id looks like TEAMID.com.foo.bar or TEAMID.*
+  unless ent_app_id.start_with?("#{expected_team_id}.")
+    UI.user_error!("Provisioning profile entitlement app-id malformed or wrong team. app-id=#{ent_app_id}, Expected prefix=#{expected_team_id}.")
+  end
+
+  expected_full = "#{expected_team_id}.#{expected_bundle_id}"
+  wildcard_full = "#{expected_team_id}.*"
+  unless ent_app_id == expected_full || ent_app_id == wildcard_full
+    UI.user_error!("Provisioning profile does not match APP_IDENTIFIER. Profile app-id=#{ent_app_id}, Expected #{expected_full} (or #{wildcard_full})")
+  end
+
+  installed_profile = File.join(profiles_dir, "#{profile_uuid}.mobileprovision")
+  FileUtils.cp(tmp_profile, installed_profile)
+
+  UI.success("✅ Installed provisioning profile: #{profile_name} (#{profile_uuid})")
+
+  {
+    uuid: profile_uuid,
+    name: profile_name,
+    team_id: team_id,
+    app_id: ent_app_id
+  }
+end
+
 platform :ios do
   ############################################################
   # Main CI lane
@@ -87,11 +136,12 @@ platform :ios do
   lane :ios_ci do
     UI.header("🚀 JunoNative iOS CI")
 
-    # 1) Verify ASC, certs, profiles and stash the api_key in lane_context
+    # 1) Verify ASC, certs, profile (no sigh) and stash api_key + profile metadata in lane_context
     verify_appstore_connect
 
-    # Grab the api_key produced by verify_appstore_connect
-    asc_api_key = Actions.lane_context[:ASC_API_KEY]
+    asc_api_key   = Actions.lane_context[:ASC_API_KEY]
+    profile_name  = Actions.lane_context[:PROFILE_NAME]
+    app_identifier = ENV["APP_IDENTIFIER"]
 
     # 2) Build native assets and pods
     prepare_build_assets
@@ -109,9 +159,17 @@ platform :ios do
       sdk: "iphoneos",
       clean: true,
 
-      # Signing/export
-      export_method: "app-store", # let gym generate exportOptionsPlist itself
-      api_key: asc_api_key,       # reuse the same ASC key for gym
+      # Export/signing: deterministic manual signing using installed profile (no portal calls)
+      export_method: "app-store",
+      api_key: asc_api_key,
+      skip_profile_detection: true,
+      export_options: {
+        signingStyle: "manual",
+        teamID: ENV["APPLE_TEAM_ID"],
+        provisioningProfiles: {
+          app_identifier => profile_name
+        }
+      },
 
       # Output
       output_directory: File.join("fastlane", "build", "ios"),
@@ -121,14 +179,12 @@ platform :ios do
       include_symbols: true,
       include_bitcode: false,
       silent: false,
-      skip_profile_detection: false,
 
       # Pass team ID into xcodebuild
       xcargs: "DEVELOPMENT_TEAM=#{ENV['APPLE_TEAM_ID']}"
     }
 
     ipa_path = build_app(ios_build_options)
-
     UI.success("✅ IPA built at #{ipa_path}")
 
     UI.message("🕊  Uploading to TestFlight")
@@ -145,19 +201,19 @@ platform :ios do
   end
 
   ############################################################
-  # 1. Verify ASC + cert + profile
+  # 1. Verify ASC + cert + profile (NO sigh)
   ############################################################
-  desc "Verify App Store Connect API key, distribution certificate and provisioning profile"
+  desc "Verify App Store Connect API key, distribution certificate and provisioning profile (installed from secret)"
   private_lane :verify_appstore_connect do
-    UI.header("🔍 Verifying ASC credentials, certificate & profile")
+    UI.header("🔍 Verifying ASC credentials, certificate & profile (no sigh)")
 
-    # These are always required
+    # Note: APPLE_ID is not required for ASC key auth or manual profile install.
     ensure_env!([
-      "APPLE_ID",
       "APPLE_TEAM_ID",
       "APP_IDENTIFIER",
       "IOS_DIST_CERT_BASE64",
-      "IOS_DIST_CERT_PASSWORD"
+      "IOS_DIST_CERT_PASSWORD",
+      "IOS_PROFILE_BASE64"
     ])
 
     # ---- ASC API key (flexible env resolution) ----
@@ -172,12 +228,15 @@ platform :ios do
       set_spaceship_token: true
     )
 
-    # Make api_key available to other lanes
+    # Hard set as well (belt + suspenders)
+    Spaceship::ConnectAPI.token = api_key
+
     Actions.lane_context[:ASC_API_KEY] = api_key
 
-    # Quick sanity: fetch app by bundle id (no full listing; deterministic)
+    # Sanity: fetch app by bundle id (ASC API requires filter, not App.find(string))
     app_identifier = ENV["APP_IDENTIFIER"]
-    app = Spaceship::ConnectAPI::App.find(app_identifier)
+    apps = Spaceship::ConnectAPI::App.all(filter: { bundleId: app_identifier })
+    app = apps.first
 
     UI.user_error!("App with identifier #{app_identifier} not found in this ASC account") if app.nil?
     UI.success("✅ Authenticated — Found app #{app.name} (#{app.bundle_id})")
@@ -190,7 +249,6 @@ platform :ios do
 
     UI.command("openssl pkcs12 -in '#{tmp_p12}' -nokeys -passin pass:*** -info >/dev/null 2>&1")
     sh("openssl pkcs12 -in '#{tmp_p12}' -nokeys -passin pass:#{ENV['IOS_DIST_CERT_PASSWORD']} -info >/dev/null 2>&1")
-
     UI.success("✅ p12 structure and password are valid")
 
     # ---- Create / configure keychain & import cert ----
@@ -217,28 +275,19 @@ platform :ios do
     ENV["MATCH_KEYCHAIN_NAME"]     = keychain_name
     ENV["MATCH_KEYCHAIN_PASSWORD"] = keychain_password
 
-    # ---- Provisioning profile via sigh ----
-    UI.header("🧾 Verifying provisioning profile via sigh")
+    # ---- Install provisioning profile from secret (no sigh, no portal) ----
+    UI.header("🧾 Installing provisioning profile from IOS_PROFILE_BASE64")
 
-    profile_path = sigh(
-      app_identifier: app_identifier,
-      api_key: api_key,
-      skip_install: true,
-      readonly: false,
-      adhoc: false,
-      developer_id: false,
-      development: false,
-      platform: "ios",
-      fail_on_name_taken: false
+    profile_meta = install_profile_from_base64!(
+      profile_base64: ENV["IOS_PROFILE_BASE64"],
+      expected_team_id: ENV["APPLE_TEAM_ID"],
+      expected_bundle_id: app_identifier
     )
 
-    UI.success("✅ Provisioning profile downloaded: #{profile_path}")
+    Actions.lane_context[:PROFILE_UUID] = profile_meta[:uuid]
+    Actions.lane_context[:PROFILE_NAME] = profile_meta[:name]
 
-    ENV["SIGH_PROFILE_PATH"]  = profile_path
-    ENV["SIGH_PROFILE_PATHS"] = [profile_path].to_json
-    ENV["SIGH_PROFILE_TYPE"]  = "app-store"
-
-    UI.success("🎉 Verification completed.")
+    UI.success("🎉 Verification completed (ASC + cert + profile).")
   end
 
   ############################################################
@@ -315,10 +364,7 @@ platform :ios do
     xcpretty = system("which xcpretty >/dev/null 2>&1")
     pretty   = xcpretty ? " | xcpretty --no-color" : ""
 
-    # IMPORTANT:
-    # - We *disable* signing here so Pods static libraries don't try to sign
-    #   with an "empty identity".
-    # - Real signing is done later by `build_app` / gym during archive.
+    # Disable signing here; real signing is done by gym during archive/export.
     common_flags = 'CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=""'
 
     cmd =
