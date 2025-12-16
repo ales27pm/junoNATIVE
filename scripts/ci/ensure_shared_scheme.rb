@@ -1,121 +1,105 @@
 #!/usr/bin/env ruby
-# ------------------------------------------------------------
-# ensure_shared_scheme.rb
-#
-# Safely ensures a shared scheme exists and builds the app
-# WITHOUT touching nil build / launch actions.
-#
-# CI-safe, idempotent, Xcode-version-tolerant.
-# ------------------------------------------------------------
+# frozen_string_literal: true
 
 require "xcodeproj"
 require "fileutils"
+require "rexml/document"
 
-PROJECT_PATH = "ios/JunoNative.xcodeproj"
-SCHEME_NAME  = "JunoNative"
+ROOT_DIR = File.expand_path("../..", __dir__)
+IOS_DIR  = File.join(ROOT_DIR, "ios")
 
-unless File.exist?(PROJECT_PATH)
-  abort "❌ Xcode project not found at #{PROJECT_PATH}"
+DEFAULT_XCODEPROJ = File.join(IOS_DIR, "JunoNativeApp.xcodeproj")
+xcodeproj_path = ENV["XCODEPROJ_PATH"].to_s.strip
+xcodeproj_path = DEFAULT_XCODEPROJ if xcodeproj_path.empty?
+
+scheme_name = ENV["SCHEME_NAME"].to_s.strip
+scheme_name = "JunoNative" if scheme_name.empty?
+
+unless File.exist?(File.join(xcodeproj_path, "project.pbxproj"))
+  abort "❌ Xcode project not found at: #{xcodeproj_path}"
 end
 
-project = Xcodeproj::Project.open(PROJECT_PATH)
+project = Xcodeproj::Project.open(xcodeproj_path)
+target  = project.targets.find { |t| t.name == scheme_name }
 
-# ------------------------------------------------------------
-# Locate application target
-# ------------------------------------------------------------
-target = project.targets.find do |t|
-  t.product_type == "com.apple.product-type.application"
+if target.nil?
+  abort "❌ Target '#{scheme_name}' not found in #{xcodeproj_path}. Targets: #{project.targets.map(&:name).join(', ')}"
 end
 
-unless target
-  abort "❌ No application target found. Did fix_ios_project.rb run?"
-end
-
-puts "✅ Found application target: #{target.name}"
-
-# ------------------------------------------------------------
-# Prepare scheme paths
-# ------------------------------------------------------------
-shared_dir = File.join(PROJECT_PATH, "xcshareddata", "xcschemes")
+shared_dir = File.join(xcodeproj_path, "xcshareddata", "xcschemes")
 FileUtils.mkdir_p(shared_dir)
+scheme_path = File.join(shared_dir, "#{scheme_name}.xcscheme")
 
-scheme_path = File.join(shared_dir, "#{SCHEME_NAME}.xcscheme")
+# Minimal, CI-friendly scheme that supports building, testing (if present), profiling, archiving.
+# We intentionally generate XML directly instead of calling Xcodeproj's scheme helpers, because
+# those APIs can differ across xcodeproj gem versions.
+doc = REXML::Document.new
+doc << REXML::XMLDecl.new("1.0", "UTF-8")
 
-# ------------------------------------------------------------
-# Load or create scheme
-# ------------------------------------------------------------
-scheme =
-  if File.exist?(scheme_path)
-    Xcodeproj::XCScheme.new(scheme_path)
-  else
-    Xcodeproj::XCScheme.new
-  end
+scheme = doc.add_element("Scheme", {
+  "LastUpgradeVersion" => "9999",
+  "version" => "1.7"
+})
 
-# ------------------------------------------------------------
-# Build Action (SAFE)
-# ------------------------------------------------------------
-build_action = scheme.build_action
+build_action = scheme.add_element("BuildAction", {
+  "parallelizeBuildables" => "YES",
+  "buildImplicitDependencies" => "YES"
+})
 
-unless build_action
-  build_action = Xcodeproj::XCScheme::BuildAction.new
-  scheme.build_action = build_action
+build_entries = build_action.add_element("BuildActionEntries")
+entry = build_entries.add_element("BuildActionEntry", {
+  "buildForTesting" => "YES",
+  "buildForRunning" => "YES",
+  "buildForProfiling" => "YES",
+  "buildForArchiving" => "YES",
+  "buildForAnalyzing" => "YES"
+})
+
+entry.add_element("BuildableReference", {
+  "BuildableIdentifier" => "primary",
+  "BlueprintIdentifier" => target.uuid,
+  "BuildableName" => target.product_reference&.path || "#{scheme_name}.app",
+  "BlueprintName" => target.name,
+  "ReferencedContainer" => "container:#{File.basename(xcodeproj_path)}"
+})
+
+test_action = scheme.add_element("TestAction", {
+  "buildConfiguration" => "Debug",
+  "selectedDebuggerIdentifier" => "Xcode.DebuggerFoundation.Debugger.LLDB",
+  "selectedLauncherIdentifier" => "Xcode.DebuggerFoundation.Launcher.LLDB",
+  "shouldUseLaunchSchemeArgsEnv" => "YES"
+})
+test_action.add_element("Testables")
+
+scheme.add_element("LaunchAction", {
+  "buildConfiguration" => "Debug",
+  "selectedDebuggerIdentifier" => "Xcode.DebuggerFoundation.Debugger.LLDB",
+  "selectedLauncherIdentifier" => "Xcode.DebuggerFoundation.Launcher.LLDB",
+  "launchStyle" => "0",
+  "useCustomWorkingDirectory" => "NO",
+  "ignoresPersistentStateOnLaunch" => "NO",
+  "debugDocumentVersioning" => "YES",
+  "debugServiceExtension" => "internal",
+  "allowLocationSimulation" => "YES"
+})
+
+scheme.add_element("ProfileAction", {
+  "buildConfiguration" => "Release",
+  "shouldUseLaunchSchemeArgsEnv" => "YES",
+  "savedToolIdentifier" => "",
+  "useCustomWorkingDirectory" => "NO",
+  "debugDocumentVersioning" => "YES"
+})
+
+scheme.add_element("AnalyzeAction", { "buildConfiguration" => "Debug" })
+scheme.add_element("ArchiveAction", { "buildConfiguration" => "Release", "revealArchiveInOrganizer" => "YES" })
+
+formatter = REXML::Formatters::Pretty.new(2)
+formatter.compact = true
+
+File.open(scheme_path, "w") do |f|
+  formatter.write(doc, f)
+  f.write("\n")
 end
 
-entries = build_action.entries || []
-
-# Remove stale entries referencing old static library
-entries.reject! do |e|
-  e.buildable_references.any? do |br|
-    br.target_name != target.name
-  end
-end
-
-# Add entry if missing
-unless entries.any? { |e| e.buildable_references.any? { |br| br.target_name == target.name } }
-  entries << Xcodeproj::XCScheme::BuildAction::Entry.new(
-    target,
-    true,  # build_for_running
-    true,  # build_for_testing
-    true,  # build_for_profiling
-    true,  # build_for_archiving
-    true   # build_for_analyzing
-  )
-end
-
-build_action.entries = entries
-scheme.build_action  = build_action
-
-# ------------------------------------------------------------
-# Launch Action (NO runnable=, NO crashes)
-# ------------------------------------------------------------
-launch_action = scheme.launch_action ||
-                Xcodeproj::XCScheme::LaunchAction.new
-
-# IMPORTANT:
-# We DO NOT set `runnable=` because it is not supported
-# consistently across Xcodeproj versions.
-launch_action.build_configuration ||= "Release"
-launch_action.selected_debugger_identifier ||= "Xcode.DebuggerFoundation.Debugger.LLDB"
-launch_action.selected_launcher_identifier ||= "Xcode.DebuggerFoundation.Launcher.LLDB"
-launch_action.launch_style ||= "0"
-launch_action.ignores_persistent_state_on_launch ||= false
-launch_action.debug_document_versioning ||= true
-
-scheme.launch_action = launch_action
-
-# ------------------------------------------------------------
-# Archive Action
-# ------------------------------------------------------------
-archive_action = scheme.archive_action ||
-                 Xcodeproj::XCScheme::ArchiveAction.new
-
-archive_action.build_configuration ||= "Release"
-archive_action.reveal_archive_in_organizer ||= true
-scheme.archive_action = archive_action
-
-# ------------------------------------------------------------
-# Save
-# ------------------------------------------------------------
-scheme.save_as(PROJECT_PATH, SCHEME_NAME, true)
-
-puts "✅ Shared scheme '#{SCHEME_NAME}' ensured successfully"
+puts "✅ Ensured shared scheme '#{scheme_name}' at: #{scheme_path}"
