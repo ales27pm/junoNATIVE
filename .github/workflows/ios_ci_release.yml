@@ -1,10 +1,9 @@
-name: iOS CI & Native Artifact Release
+name: iOS CI & TestFlight Release
 
 on:
   push:
-    branches: [ main ]
-    tags:
-      - "ios-v*"
+    branches: [ "main" ]
+    tags: [ "ios-v*" ]
   workflow_dispatch:
 
 jobs:
@@ -12,48 +11,79 @@ jobs:
     runs-on: macos-14
 
     env:
-      BUNDLE_PATH: vendor/bundle
-
-      # App & team identifiers
-      APPLE_ID: ${{ secrets.APPLE_ID }}
+      # App metadata
       APP_IDENTIFIER: ${{ secrets.APP_IDENTIFIER }}
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
-      # App Store Connect API key
+      # App Store Connect credentials
       APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
       APP_STORE_CONNECT_API_KEY_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ISSUER_ID }}
       APP_STORE_CONNECT_API_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_API_KEY_BASE64 }}
-      # (Optional alternative) APP_STORE_CONNECT_API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
 
-      # Distribution certificate + provisioning profile
+      # Manual signing inputs
       IOS_DIST_CERT_BASE64: ${{ secrets.IOS_DIST_CERT_BASE64 }}
       IOS_DIST_CERT_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
       IOS_PROFILE_BASE64: ${{ secrets.IOS_PROFILE_BASE64 }}
 
-      # Optional (fastlane falls back if empty)
-      KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
       MATCH_KEYCHAIN_PASSWORD: ${{ secrets.MATCH_KEYCHAIN_PASSWORD }}
-
-      CI: true
+      KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+      CI: "true"
 
     steps:
-      - name: 🧾 Checkout
+      - name: 🧾 Checkout source
         uses: actions/checkout@v4
 
-      - name: 🧩 Setup Node.js
+      - name: 📂 Ensure ios directory exists
+        shell: bash
+        run: |
+          set -e
+          if [ ! -d "ios" ]; then
+            echo "⚙️ Creating ios directory (required for CocoaPods)"
+            mkdir ios
+          fi
+          ls -la ios || true
+
+      - name: 🍺 Install dependencies (XcodeGen + CocoaPods)
+        shell: bash
+        run: |
+          set -euxo pipefail
+          brew update
+          brew install xcodegen cocoapods
+          which xcodegen
+          xcodegen version
+          pod --version
+
+      - name: 🟢 Setup Node.js 22
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
+          cache: yarn
 
-      - name: 📦 Install JS deps
-        run: npm ci
-
-      - name: 💎 Setup Ruby
+      - name: 🧰 Setup Ruby
         uses: ruby/setup-ruby@v1
         with:
           ruby-version: "3.3"
           bundler-cache: true
 
-      - name: 🚀 Fastlane (verify + patch + build + upload)
-        run: bundle exec fastlane ios ios_ci
+      - name: 📦 Install JS dependencies
+        shell: bash
+        run: |
+          set -euxo pipefail
+          corepack enable
+          yarn install --frozen-lockfile || yarn install
+
+      - name: 🧱 Verify system versions
+        run: |
+          echo "Node $(node -v)"
+          echo "Ruby $(ruby -v)"
+          echo "Xcode version:"
+          xcodebuild -version
+          echo "SDKs:"
+          xcodebuild -showsdks | head -n 20
+
+      - name: 🚀 Build + Upload TestFlight (Fastlane)
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Running Fastlane iOS CI..."
+          bundle exec fastlane ios ios_ci
