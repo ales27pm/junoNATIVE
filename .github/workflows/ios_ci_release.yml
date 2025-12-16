@@ -1,95 +1,59 @@
-# .github/workflows/ios_ci.yml
-name: iOS CI & Native Artifact Release
+name: iOS CI & TestFlight Upload (Fastlane)
 
 on:
   push:
-    branches:
-      - main
+    branches: [ "main" ]
     tags:
       - "ios-v*"
-  workflow_dispatch:
+  workflow_dispatch: {}
 
 jobs:
   build-and-release-ios:
     runs-on: macos-14
+    timeout-minutes: 60
 
     env:
-      # --- Ruby / bundler path ---
-      BUNDLE_PATH: vendor/bundle
-
-      # --- App & team identifiers ---
-      APPLE_ID: ${{ secrets.APPLE_ID }}
+      # App identity
       APP_IDENTIFIER: ${{ secrets.APP_IDENTIFIER }}
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
-      # --- App Store Connect API key (these MUST be set as GitHub secrets) ---
-      # Use the SAME secret names you used in the verify_appstore_connect workflow
-      APP_STORE_CONNECT_API_KEY_ID:     ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+      # App Store Connect API key (recommended)
+      APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
       APP_STORE_CONNECT_API_KEY_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ISSUER_ID }}
-      APP_STORE_CONNECT_API_KEY_BASE64:  ${{ secrets.APP_STORE_CONNECT_API_KEY_BASE64 }}
-      IOS_PROFILE_BASE64: ${{ secrets.IOS_PROFILE_BASE64 }}
+      APP_STORE_CONNECT_API_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_API_KEY_BASE64 }}
 
+      # Signing assets (P12 + provisioning profile)
+      IOS_CERT_P12_BASE64: ${{ secrets.IOS_CERT_P12_BASE64 }}
+      IOS_CERT_PASSWORD: ${{ secrets.IOS_CERT_PASSWORD }}
+      IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
 
-      # --- Distribution certificate (.p12) ---
-      IOS_DIST_CERT_BASE64: ${{ secrets.IOS_DIST_CERT_BASE64 }}
-      IOS_DIST_CERT_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
+      # Keychain password used by Fastlane (optional but recommended)
+      MATCH_KEYCHAIN_PASSWORD: ${{ secrets.MATCH_KEYCHAIN_PASSWORD }}
 
-      # Optional, used by the manual keychain step
-      KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+      # Faster + quieter
+      CI: "true"
 
     steps:
-      - name: 🧾 Checkout code
+      - name: 🧾 Checkout
         uses: actions/checkout@v4
 
-      # ---------- JS deps (needed for Podfile checks) ----------
-      - name: 🧩 Setup Node.js
+      - name: 🟢 Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 22
-          cache: npm
+          node-version: "22"
+          cache: "npm"
 
-      - name: 📦 Install JS dependencies
+      - name: 📦 Install JS deps
         run: npm ci
 
-      # ---------- Ruby / Bundler ----------
       - name: 💎 Setup Ruby
         uses: ruby/setup-ruby@v1
         with:
-          ruby-version: '3.3'
+          ruby-version: "3.3"
           bundler-cache: true
 
-      - name: 📚 Install Ruby gems
-        run: bundle install --jobs 4 --retry 3
+      - name: 🧰 Install Bundler deps
+        run: bundle install --path vendor/bundle
 
-      # ---------- Install Apple certificate into temp keychain ----------
-      - name: 🔐 Install Apple distribution certificate
-        env:
-          IOS_DIST_CERT_BASE64: ${{ secrets.IOS_DIST_CERT_BASE64 }}
-          IOS_DIST_CERT_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
-          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
-        run: |
-          CERT_PATH="$RUNNER_TEMP/dist.p12"
-          echo "$IOS_DIST_CERT_BASE64" | base64 --decode > "$CERT_PATH"
-
-          KEYCHAIN_PATH="$RUNNER_TEMP/build.keychain-db"
-          security create-keychain -p "${KEYCHAIN_PASSWORD}" "$KEYCHAIN_PATH"
-          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
-          security unlock-keychain -p "${KEYCHAIN_PASSWORD}" "$KEYCHAIN_PATH"
-
-          security import "$CERT_PATH" -P "$IOS_DIST_CERT_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
-          security set-key-partition-list -S apple-tool:,apple: -s -k "${KEYCHAIN_PASSWORD}" "$KEYCHAIN_PATH"
-          security list-keychain -d user -s "$KEYCHAIN_PATH"
-
-      # ---------- Fastlane: verify + build + upload ----------
-      - name: 🚀 Build & upload via Fastlane
+      - name: 🚀 Build + Upload TestFlight
         run: bundle exec fastlane ios ios_ci
-
-      # ---------- Cleanup ----------
-      - name: 🧹 Cleanup keychain
-        if: ${{ always() }}
-        env:
-          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
-        run: |
-          if [ -f "$RUNNER_TEMP/build.keychain-db" ]; then
-            security delete-keychain "$RUNNER_TEMP/build.keychain-db" || true
-          fi
