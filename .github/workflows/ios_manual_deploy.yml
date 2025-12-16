@@ -10,7 +10,7 @@ on:
 
 jobs:
   ios_manual_deploy:
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 60
 
     env:
@@ -45,6 +45,13 @@ jobs:
     steps:
       - name: 🧾 Checkout code
         uses: actions/checkout@v4
+
+      - name: 🧰 Select Xcode 16
+        shell: bash
+         run: |
+          set -euo pipefail
+          sudo xcode-select -s /Applications/Xcode_16.app
+          xcodebuild -version
 
       - name: Compute build paths
         shell: bash
