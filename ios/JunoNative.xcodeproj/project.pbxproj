@@ -93,7 +93,7 @@
 			name = JunoNative;
 			productName = JunoNative;
 			productReference = 6A938A7F04308628BECDCF90 /* libJunoNative.a */;
-			productType = "com.apple.product-type.library.static";
+			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
 
