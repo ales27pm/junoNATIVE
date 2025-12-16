@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<document type="com.apple.InterfaceBuilder3.CocoaTouch.Storyboard.XIB"
+  version="3.0" launchScreen="YES"
+  useAutolayout="YES" useSafeAreas="YES">
+  <scenes>
+    <scene>
+      <objects>
+        <viewController>
+          <view>
+            <subviews>
+              <label text="JunoNative"
+                textAlignment="center"
+                fontDescription="boldSystem"
+                pointSize="30"/>
+            </subviews>
+          </view>
+        </viewController>
+      </objects>
+    </scene>
+  </scenes>
+</document>
