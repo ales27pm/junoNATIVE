@@ -1,13 +1,17 @@
-# fastlane/Fastfile
-
 default_platform(:ios)
 
 require "tmpdir"
 require "base64"
 require "fileutils"
 require "shellwords"
+require "securerandom"
 
 ROOT_DIR = File.expand_path("..", __dir__)
+
+############################################################
+# Fastlane settings
+############################################################
+opt_out_usage
 
 ############################################################
 # Helpers
@@ -88,150 +92,88 @@ def find_apple_distribution_identity!
   m[1]
 end
 
-def validate_xcarchive_has_app!(archive_path)
+def write_export_options_plist!(path:, team_id:, bundle_id:, profile_name:)
+  # Write a REAL XML plist (not JSON). This avoids the “method expected {}” garbage.
+  xml = <<~PLIST
+    <?xml version="1.0" encoding="UTF-8"?>
+    <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+    <plist version="1.0">
+    <dict>
+      <key>method</key>
+      <string>app-store</string>
+
+      <key>signingStyle</key>
+      <string>manual</string>
+
+      <key>teamID</key>
+      <string>#{team_id}</string>
+
+      <key>provisioningProfiles</key>
+      <dict>
+        <key>#{bundle_id}</key>
+        <string>#{profile_name}</string>
+      </dict>
+
+      <key>uploadSymbols</key>
+      <true/>
+
+      <key>uploadBitcode</key>
+      <false/>
+    </dict>
+    </plist>
+  PLIST
+
+  File.write(path, xml)
+  path
+end
+
+def validate_archive_has_app!(archive_path:)
   apps_dir = File.join(archive_path, "Products", "Applications")
-  unless Dir.exist?(apps_dir)
-    UI.user_error!("Archive validation failed: missing Products/Applications.
-This is a GENERIC archive and cannot be exported.
-
-Archive path: #{archive_path}
-
-Try:
-- Ensure the archived target is an iOS APP (not a framework/aggregate)
-- Ensure SKIP_INSTALL=NO on the app target (Release/Archive)
-")
-  end
+  UI.user_error!("Archive is missing Products/Applications: #{apps_dir}") unless Dir.exist?(apps_dir)
 
   apps = Dir.glob(File.join(apps_dir, "*.app"))
-  if apps.empty?
-    # extra diagnostics (super useful on CI)
-    UI.error("Archive has Products/Applications but contains no *.app")
-    UI.message("🔎 Listing archive top-level:")
-    sh("ls -la '#{archive_path}' || true")
-    UI.message("🔎 Listing Products/Applications:")
-    sh("ls -la '#{apps_dir}' || true")
-    UI.message("🔎 Searching for any *.app inside archive:")
-    sh("find '#{archive_path}' -maxdepth 6 -name '*.app' -print || true")
-
-    UI.user_error!("Archive validation failed: Products/Applications exists but contains no *.app.
-This almost always means SKIP_INSTALL is still YES for the app target,
-or the scheme is archiving a non-installable target.
-
-Archive path: #{archive_path}")
-  end
+  UI.user_error!("Archive has Products/Applications but no .app inside: #{apps_dir}") if apps.empty?
 
   UI.success("✅ Archive contains app: #{File.basename(apps.first)}")
+  apps.first
 end
 
 platform :ios do
   ############################################################
   # Main CI lane
   ############################################################
-  desc "CI pipeline: verify ASC, certs, profile; patch xcodeproj; archive; export IPA; upload TestFlight"
+  desc "CI pipeline: verify ASC + cert + profile; patch project + scheme; build IPA; upload TestFlight"
   lane :ios_ci do
     UI.header("🚀 JunoNative iOS CI")
 
     verify_appstore_connect_no_sigh
 
-    asc_api_key     = Actions.lane_context[:ASC_API_KEY]
-    profile_name    = Actions.lane_context[:PROFILE_NAME]
+    asc_api_key  = Actions.lane_context[:ASC_API_KEY]
+    profile_name = Actions.lane_context[:PROFILE_NAME]
 
-    app_identifier  = ensure_any!("App bundle id", "APP_IDENTIFIER")
-    team_id         = ensure_any!("Apple Team ID", "APPLE_TEAM_ID")
+    app_identifier = ensure_any!("App bundle id", "APP_IDENTIFIER")
+    team_id        = ensure_any!("Apple Team ID", "APPLE_TEAM_ID")
+
+    # Enable New Architecture everywhere deterministically
+    ENV["RCT_NEW_ARCH_ENABLED"] = "1"
 
     prepare_build_assets
     install_cocoapods
 
-    # Critical: ensure Archive is exportable (and prevents empty Products/Applications)
+    # Critical: patch “Skip Install”, install path, and force a shared scheme that builds the app target.
     fix_xcodeproj_settings
 
     compile_swift_sources
 
-    UI.message("📦 Building archive + exporting IPA")
-
-    codesign_identity = find_apple_distribution_identity!
-    UI.message("🔏 Using codesigning identity: #{codesign_identity}")
-
-    # 🔥 Hard override the one setting that most commonly causes “Applications folder empty”.
-    # Even if the pbxproj is wrong, this forces xcodebuild to install the app into the archive.
-    signing_xcargs = [
-      "DEVELOPMENT_TEAM=#{team_id}",
-      "CODE_SIGN_STYLE=Manual",
-      "CODE_SIGN_IDENTITY=#{Shellwords.escape(codesign_identity)}",
-      "PROVISIONING_PROFILE_SPECIFIER=#{Shellwords.escape(profile_name)}",
-      "SKIP_INSTALL=NO",
-      "INSTALL_PATH=/Applications"
-    ].join(" ")
-
-    output_dir   = File.join(ROOT_DIR, "fastlane", "build", "ios")
-    archive_path = File.join(output_dir, "JunoNative.xcarchive")
-    export_dir   = File.join(output_dir, "export")
-
-    FileUtils.mkdir_p(output_dir)
-    FileUtils.rm_rf(archive_path)
-    FileUtils.rm_rf(export_dir)
-
-    # ---------- 1) ARCHIVE (only) ----------
-    UI.message("📦 Creating XCARCHIVE (archive-only)")
-    build_app(
-      workspace: File.join("ios", "JunoNative.xcworkspace"),
-      scheme: "JunoNative",
-      configuration: "Release",
-      sdk: "iphoneos",
-      clean: true,
-
-      archive_path: archive_path,
-      skip_package_ipa: true,
-      skip_profile_detection: true,
-
-      include_symbols: true,
-      include_bitcode: false,
-      silent: false,
-
-      xcargs: signing_xcargs
+    ipa_path = archive_and_export_ipa(
+      app_identifier: app_identifier,
+      team_id: team_id,
+      profile_name: profile_name
     )
 
-    UI.success("✅ Archive created at #{File.expand_path(archive_path)}")
-    validate_xcarchive_has_app!(File.expand_path(archive_path))
+    UI.user_error!("No IPA produced; cannot upload to TestFlight.") if ipa_path.to_s.empty? || !File.exist?(ipa_path)
 
-    # ---------- 2) EXPORT IPA ----------
-    UI.message("📦 Exporting IPA from archive")
-    FileUtils.mkdir_p(export_dir)
-
-    build_app(
-      skip_build_archive: true,
-      archive_path: archive_path,
-
-      export_method: "app-store",
-      skip_profile_detection: true,
-      export_team_id: team_id,
-
-      export_options: {
-        signingStyle: "manual",
-        teamID: team_id,
-        provisioningProfiles: {
-          app_identifier => profile_name
-        },
-        uploadSymbols: true,
-        uploadBitcode: false
-      },
-
-      output_directory: export_dir,
-      output_name: "JunoNative.ipa",
-
-      include_symbols: true,
-      include_bitcode: false,
-      silent: false,
-
-      xcargs: signing_xcargs
-    )
-
-    ipa_path = File.join(export_dir, "JunoNative.ipa")
-    UI.user_error!("❌ IPA export did not produce #{ipa_path}") unless File.exist?(ipa_path)
-    UI.success("✅ IPA built at #{File.expand_path(ipa_path)}")
-
-    # ---------- 3) UPLOAD ----------
-    UI.message("🕊  Uploading to TestFlight")
+    UI.message("🕊  Uploading IPA to TestFlight: #{ipa_path}")
 
     upload_to_testflight(
       ipa: ipa_path,
@@ -272,7 +214,7 @@ platform :ios do
     UI.user_error!("App with identifier #{app_identifier} not found in this ASC account") if app.nil?
     UI.success("✅ Authenticated — Found app #{app.name} (#{app.bundle_id})")
 
-    UI.header("🔐 Verifying distribution certificate (.p12)")
+    UI.header("🔐 Importing distribution certificate (.p12)")
 
     tmp_p12 = File.join(Dir.tmpdir, "dist#{Process.pid}-#{Time.now.to_i}.p12")
     File.binwrite(tmp_p12, Base64.decode64(cert_b64))
@@ -280,12 +222,16 @@ platform :ios do
     sh("openssl pkcs12 -in '#{tmp_p12}' -nokeys -passin pass:#{Shellwords.escape(cert_pw)} -info >/dev/null 2>&1")
     UI.success("✅ p12 structure and password are valid")
 
-    keychain_name     = "ios-build.keychain-db"
+    keychain_name = "ios-build.keychain-db"
     keychain_password = env_any("KEYCHAIN_PASSWORD", "MATCH_KEYCHAIN_PASSWORD")
     keychain_password = "fastlane_ci_temp" if keychain_password.to_s.empty?
 
-    # Clean slate if something left a keychain behind
-    delete_keychain(name: keychain_name) rescue nil
+    # Ensure clean keychain each run
+    begin
+      delete_keychain(name: keychain_name)
+    rescue StandardError
+      # ignore
+    end
 
     create_keychain(
       name: keychain_name,
@@ -305,6 +251,7 @@ platform :ios do
       keychain_name: keychain_name
     )
 
+    # Allow non-interactive codesign access on CI
     sh("security set-key-partition-list -S apple-tool:,apple: -s -k #{Shellwords.escape(keychain_password)} #{Shellwords.escape(keychain_path)}")
 
     UI.header("🧾 Installing provisioning profile from secret")
@@ -322,55 +269,29 @@ platform :ios do
   end
 
   ############################################################
-  # Patch Xcode project so Archive produces a real .app
+  # Patch Xcode project + shared scheme
   ############################################################
   private_lane :fix_xcodeproj_settings do
-    UI.header("🧰 Fixing Xcode project settings for CI archive exportability")
+    UI.header("🧰 Fixing Xcode project + generating shared scheme (CI)")
+
+    # These scripts are designed to be safe/idempotent
     sh("bundle exec ruby #{File.join(ROOT_DIR, 'scripts', 'ci', 'fix_xcodeproj.rb')}")
-    UI.success("✅ Xcode project patched for archive/export")
+    sh("bundle exec ruby #{File.join(ROOT_DIR, 'scripts', 'ci', 'ensure_shared_scheme.rb')}")
+
+    UI.success("✅ Xcode project patched + shared scheme ensured")
   end
 
   ############################################################
-  # Build DSP core (CMake)
-  ############################################################
-  private_lane :compile_dsp_engine do
-    UI.header("🎛  Compiling DSP engine via CMake")
-
-    build_dir = File.join(ROOT_DIR, "fastlane", "build", "cmake")
-    sh("cmake -S #{ROOT_DIR} -B #{build_dir} -DCMAKE_BUILD_TYPE=Release")
-    sh("cmake --build #{build_dir} --config Release")
-
-    UI.success("✅ DSP engine + tests compiled")
-  end
-
-  ############################################################
-  # TurboModules codegen stub
-  ############################################################
-  private_lane :compile_turbo_modules do
-    UI.header("⚙️  TurboModules / Fabric codegen stub")
-    codegen_build_dir = File.join(ROOT_DIR, "fastlane", "build", "codegen")
-    FileUtils.mkdir_p(codegen_build_dir)
-    UI.success("✅ TurboModules stub completed")
-  end
-
-  private_lane :prepare_build_assets do
-    UI.header("🧱 Preparing build assets (DSP engine + TurboModules)")
-    compile_dsp_engine
-    compile_turbo_modules
-  end
-
-  ############################################################
-  # CocoaPods install
+  # CocoaPods install (New Arch codegen enabled)
   ############################################################
   private_lane :install_cocoapods do
-    UI.header("📦 Installing CocoaPods dependencies")
+    UI.header("📦 Installing CocoaPods dependencies (New Arch enabled)")
     ios_dir = File.join(ROOT_DIR, "ios")
-    Dir.chdir(ios_dir) do
-      # If you’re using new arch, you likely want this on CI too:
-      ENV["RCT_NEW_ARCH_ENABLED"] = "1" if ENV["RCT_NEW_ARCH_ENABLED"].to_s.empty?
-      sh("bundle exec pod install --repo-update")
-    end
-    UI.success("✅ Pods installed")
+
+    # IMPORTANT: exporting in one sh call doesn’t persist; set it on the same command
+    Dir.chdir(ios_dir) { sh("RCT_NEW_ARCH_ENABLED=1 bundle exec pod install --repo-update") }
+
+    UI.success("✅ Pods installed with New Architecture enabled")
   end
 
   ############################################################
@@ -385,7 +306,12 @@ platform :ios do
     xcpretty = system("which xcpretty >/dev/null 2>&1")
     pretty   = xcpretty ? " | xcpretty --no-color" : ""
 
-    common_flags = 'CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=""'
+    common_flags = [
+      "CODE_SIGNING_ALLOWED=NO",
+      "CODE_SIGNING_REQUIRED=NO",
+      "CODE_SIGN_IDENTITY=",
+      "RCT_NEW_ARCH_ENABLED=1"
+    ].join(" ")
 
     cmd =
       if File.exist?(ws)
@@ -398,5 +324,106 @@ platform :ios do
 
     sh("set -o pipefail && #{cmd}#{pretty}")
     UI.success("✅ Preflight build succeeded (no signing)")
+  end
+
+  ############################################################
+  # Archive + Export IPA via xcodebuild (deterministic)
+  ############################################################
+  private_lane :archive_and_export_ipa do |opts|
+    app_identifier = opts[:app_identifier].to_s
+    team_id        = opts[:team_id].to_s
+    profile_name   = opts[:profile_name].to_s
+
+    UI.header("📦 Archiving + Exporting IPA (xcodebuild)")
+
+    ws = File.join(ROOT_DIR, "ios", "JunoNative.xcworkspace")
+    UI.user_error!("Workspace not found at #{ws}") unless File.exist?(ws)
+
+    archive_dir  = File.join(ROOT_DIR, "fastlane", "build", "ios")
+    FileUtils.mkdir_p(archive_dir)
+
+    archive_path = File.join(archive_dir, "JunoNative.xcarchive")
+    export_path  = File.join(archive_dir, "export")
+    FileUtils.rm_rf(export_path)
+    FileUtils.mkdir_p(export_path)
+
+    codesign_identity = find_apple_distribution_identity!
+    UI.message("🔏 Using codesigning identity: #{codesign_identity}")
+    UI.message("🧾 Using profile name: #{profile_name}")
+
+    # Archive (must produce a REAL .app in Products/Applications)
+    archive_cmd = [
+      "xcodebuild",
+      "-workspace", Shellwords.escape(ws),
+      "-scheme", "JunoNative",
+      "-configuration", "Release",
+      "-sdk", "iphoneos",
+      "-destination", Shellwords.escape("generic/platform=iOS"),
+      "-archivePath", Shellwords.escape(archive_path),
+      "archive",
+      "DEVELOPMENT_TEAM=#{team_id}",
+      "CODE_SIGN_STYLE=Manual",
+      "CODE_SIGN_IDENTITY=#{Shellwords.escape(codesign_identity)}",
+      "PROVISIONING_PROFILE_SPECIFIER=#{Shellwords.escape(profile_name)}",
+      "RCT_NEW_ARCH_ENABLED=1"
+    ].join(" ")
+
+    sh("set -o pipefail && #{archive_cmd}")
+
+    validate_archive_has_app!(archive_path: archive_path)
+
+    export_plist = File.join(Dir.tmpdir, "exportOptions-#{SecureRandom.hex(6)}.plist")
+    write_export_options_plist!(
+      path: export_plist,
+      team_id: team_id,
+      bundle_id: app_identifier,
+      profile_name: profile_name
+    )
+
+    export_cmd = [
+      "xcodebuild",
+      "-exportArchive",
+      "-archivePath", Shellwords.escape(archive_path),
+      "-exportPath", Shellwords.escape(export_path),
+      "-exportOptionsPlist", Shellwords.escape(export_plist),
+      "RCT_NEW_ARCH_ENABLED=1"
+    ].join(" ")
+
+    sh("set -o pipefail && #{export_cmd}")
+
+    ipa = Dir.glob(File.join(export_path, "*.ipa")).first
+    UI.user_error!("Export succeeded but no IPA found in #{export_path}") if ipa.nil?
+
+    UI.success("✅ IPA exported: #{ipa}")
+    ipa
+  end
+
+  ############################################################
+  # Build DSP core (CMake) – keep your existing behaviour
+  ############################################################
+  private_lane :compile_dsp_engine do
+    UI.header("🎛  Compiling DSP engine via CMake")
+
+    build_dir = File.join(ROOT_DIR, "fastlane", "build", "cmake")
+    sh("cmake -S #{ROOT_DIR} -B #{build_dir} -DCMAKE_BUILD_TYPE=Release")
+    sh("cmake --build #{build_dir} --config Release")
+
+    UI.success("✅ DSP engine + tests compiled")
+  end
+
+  ############################################################
+  # TurboModules placeholder (kept; actual codegen is done by Pods)
+  ############################################################
+  private_lane :compile_turbo_modules do
+    UI.header("⚙️  TurboModules / Fabric placeholder")
+    codegen_build_dir = File.join(ROOT_DIR, "fastlane", "build", "codegen")
+    FileUtils.mkdir_p(codegen_build_dir)
+    UI.success("✅ TurboModules placeholder completed")
+  end
+
+  private_lane :prepare_build_assets do
+    UI.header("🧱 Preparing build assets (DSP engine + TurboModules)")
+    compile_dsp_engine
+    compile_turbo_modules
   end
 end
