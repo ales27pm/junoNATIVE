@@ -1,0 +1,84 @@
+name: iOS CI – JunoNative
+
+on:
+  push:
+    branches: [ main ]
+    tags:
+      - "ios-v*"
+  workflow_dispatch:
+
+jobs:
+  ios:
+    name: Build & Archive iOS App
+    runs-on: macos-14
+
+    timeout-minutes: 90
+
+    env:
+      CI: true
+      RCT_NEW_ARCH_ENABLED: "1"
+
+      # --- App identifiers ---
+      APP_IDENTIFIER: ${{ secrets.APP_IDENTIFIER }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+      # --- Signing ---
+      IOS_DIST_CERT_BASE64: ${{ secrets.IOS_DIST_CERT_BASE64 }}
+      IOS_DIST_CERT_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
+      IOS_PROFILE_BASE64: ${{ secrets.IOS_PROFILE_BASE64 }}
+
+    steps:
+      # ----------------------------------------------------
+      # 1. Checkout
+      # ----------------------------------------------------
+      - name: 🧾 Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # ----------------------------------------------------
+      # 2. Ruby (Fastlane / CocoaPods)
+      # ----------------------------------------------------
+      - name: 💎 Setup Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+          bundler-cache: true
+
+      # ----------------------------------------------------
+      # 3. Node (React Native)
+      # ----------------------------------------------------
+      - name: 🟢 Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "yarn"
+
+      - name: 📦 Install JS dependencies
+        run: |
+          yarn install --frozen-lockfile
+
+      # ----------------------------------------------------
+      # 4. CocoaPods
+      # ----------------------------------------------------
+      - name: 🧩 Install CocoaPods dependencies
+        working-directory: ios
+        run: |
+          bundle exec pod install --repo-update
+
+      # ----------------------------------------------------
+      # 5. Fastlane – Full CI pipeline
+      # ----------------------------------------------------
+      - name: 🚀 Run Fastlane iOS CI
+        run: |
+          bundle exec fastlane ios ios_ci
+
+      # ----------------------------------------------------
+      # 6. Upload IPA Artifact
+      # ----------------------------------------------------
+      - name: 📤 Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: JunoNative-IPA
+          path: fastlane/build/ios/export/*.ipa
+          if-no-files-found: error
