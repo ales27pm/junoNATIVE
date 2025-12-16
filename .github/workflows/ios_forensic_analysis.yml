@@ -1,0 +1,162 @@
+name: iOS Forensic Analysis (No Build, No Signing)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  analyze-ios-project:
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    env:
+      XCODE_PROJECT: ios/JunoNative.xcodeproj
+      XCODE_WORKSPACE: ios/JunoNative.xcworkspace
+      CONFIGURATION: Release
+
+    steps:
+      - name: 🧾 Checkout repository
+        uses: actions/checkout@v4
+
+      - name: 🧰 Select Xcode 16
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo xcode-select -s /Applications/Xcode_16.app
+          xcodebuild -version
+
+      # ------------------------------------------------------------
+      # 1️⃣ Project-level target inventory
+      # ------------------------------------------------------------
+      - name: 🔎 List all Xcode targets
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "### TARGET LIST (project)" | tee targets.txt
+          xcodebuild -list -project "$XCODE_PROJECT" | tee -a targets.txt
+
+      # ------------------------------------------------------------
+      # 2️⃣ Extract targets + PRODUCT_TYPE
+      # ------------------------------------------------------------
+      - name: 🧬 Classify targets by PRODUCT_TYPE
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "TARGET,PRODUCT_TYPE,SKIP_INSTALL,INSTALL_PATH" > target_matrix.csv
+
+          TARGETS=$(xcodebuild -list -project "$XCODE_PROJECT" | awk '
+            $0 ~ /^Targets:/ {in_t=1; next}
+            in_t && NF==0 {exit}
+            in_t {print $1}
+          ')
+
+          for T in $TARGETS; do
+            echo "Inspecting target: $T"
+
+            SETTINGS=$(xcodebuild \
+              -showBuildSettings \
+              -project "$XCODE_PROJECT" \
+              -target "$T" \
+              -configuration "$CONFIGURATION" 2>/dev/null || true)
+
+            PT=$(echo "$SETTINGS" | awk -F' = ' '/PRODUCT_TYPE/ {print $2; exit}')
+            SKIP=$(echo "$SETTINGS" | awk -F' = ' '/SKIP_INSTALL/ {print $2; exit}')
+            IP=$(echo "$SETTINGS" | awk -F' = ' '/INSTALL_PATH/ {print $2; exit}')
+
+            echo "$T,$PT,$SKIP,$IP" >> target_matrix.csv
+          done
+
+          column -s, -t target_matrix.csv | tee target_matrix.txt
+
+      # ------------------------------------------------------------
+      # 3️⃣ Detect application targets
+      # ------------------------------------------------------------
+      - name: 🧠 Detect application targets
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "### APPLICATION TARGETS" | tee app_targets.txt
+          grep "com.apple.product-type.application" target_matrix.csv | tee -a app_targets.txt || true
+
+          COUNT=$(grep -c "com.apple.product-type.application" target_matrix.csv || true)
+          echo "Found $COUNT application target(s)"
+
+      # ------------------------------------------------------------
+      # 4️⃣ Workspace scheme analysis
+      # ------------------------------------------------------------
+      - name: 🎛️ List workspace schemes
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "### SCHEMES (workspace)" | tee schemes.txt
+          xcodebuild -list -workspace "$XCODE_WORKSPACE" | tee -a schemes.txt
+
+      - name: 🔬 Inspect scheme PRODUCT_TYPE
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "SCHEME,PRODUCT_TYPE" > scheme_matrix.csv
+
+          SCHEMES=$(xcodebuild -list -workspace "$XCODE_WORKSPACE" | awk '
+            $0 ~ /^Schemes:/ {in_s=1; next}
+            in_s && NF==0 {exit}
+            in_s {print $1}
+          ')
+
+          for S in $SCHEMES; do
+            PT=$(xcodebuild \
+              -showBuildSettings \
+              -workspace "$XCODE_WORKSPACE" \
+              -scheme "$S" \
+              -configuration "$CONFIGURATION" 2>/dev/null | \
+              awk -F' = ' '/PRODUCT_TYPE/ {print $2; exit}')
+
+            echo "$S,$PT" >> scheme_matrix.csv
+          done
+
+          column -s, -t scheme_matrix.csv | tee scheme_matrix.txt
+
+      # ------------------------------------------------------------
+      # 5️⃣ Verdict
+      # ------------------------------------------------------------
+      - name: 🧾 Generate forensic verdict
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "### FORENSIC VERDICT" > verdict.txt
+
+          if grep -q "com.apple.product-type.application" target_matrix.csv; then
+            echo "✅ Application target EXISTS" >> verdict.txt
+          else
+            echo "❌ NO application target found — project cannot archive an app" >> verdict.txt
+          fi
+
+          if grep -q "com.apple.product-type.application" scheme_matrix.csv; then
+            echo "⚠️ At least one scheme points to an application" >> verdict.txt
+          else
+            echo "❌ All schemes point to libraries/frameworks (Generic Archive guaranteed)" >> verdict.txt
+          fi
+
+          echo "" >> verdict.txt
+          echo "Recommended next step:" >> verdict.txt
+          echo "- Archive by TARGET instead of scheme OR" >> verdict.txt
+          echo "- Generate a correct shared app scheme" >> verdict.txt
+
+          cat verdict.txt
+
+      # ------------------------------------------------------------
+      # 6️⃣ Upload forensic artifacts
+      # ------------------------------------------------------------
+      - name: 📎 Upload forensic artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-forensic-report
+          path: |
+            targets.txt
+            target_matrix.csv
+            target_matrix.txt
+            schemes.txt
+            scheme_matrix.csv
+            scheme_matrix.txt
+            app_targets.txt
+            verdict.txt
