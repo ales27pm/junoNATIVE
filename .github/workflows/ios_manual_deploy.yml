@@ -25,7 +25,7 @@ jobs:
       IOS_DIST_CERT_BASE64: ${{ secrets.IOS_DIST_CERT_BASE64 }}
       IOS_DIST_CERT_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
 
-      # ✅ Renamed secret (provisioning profile .mobileprovision as BASE64)
+      # Provisioning profile (.mobileprovision) as BASE64
       IOS_PROFILE_BASE64: ${{ secrets.IOS_PROFILE_BASE64 }}
 
       KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
@@ -50,6 +50,7 @@ jobs:
           echo "EXPORT_DIR=$RUNNER_TEMP/build" >> "$GITHUB_ENV"
           echo "ASC_DIR=$RUNNER_TEMP/asc" >> "$GITHUB_ENV"
           echo "ASC_API_KEY_JSON=$RUNNER_TEMP/api_key.json" >> "$GITHUB_ENV"
+          echo "PROFILE_PLIST=$RUNNER_TEMP/profile.plist" >> "$GITHUB_ENV"
 
       - name: 🧠 Detect JS package manager (Option B)
         id: pm
@@ -170,10 +171,12 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security find-identity -v -p codesigning "$KEYCHAIN_PATH"
 
-      - name: 📄 Decode provisioning profile (App Store)
+      # ✅ REPLACED: strict decode + sanity check + extract UUID via a plist file
+      - name: 📄 Decode provisioning profile (App Store) [strict]
         shell: bash
         run: |
           set -euo pipefail
+
           if [ -z "${IOS_PROFILE_BASE64:-}" ]; then
             echo "IOS_PROFILE_BASE64 is empty. Set it in GitHub Secrets."
             exit 1
@@ -183,12 +186,38 @@ jobs:
           mkdir -p "$PP_DIR"
 
           PP_FILE="$RUNNER_TEMP/profile.mobileprovision"
-          echo "$IOS_PROFILE_BASE64" | base64 --decode > "$PP_FILE"
+          PLIST_FILE="$PROFILE_PLIST"
 
-          UUID=$(/usr/bin/security cms -D -i "$PP_FILE" | /usr/libexec/PlistBuddy -c 'Print:UUID' /dev/stdin)
+          export PP_FILE PLIST_FILE
+
+          python3 - <<'PY'
+import os, re, base64, sys
+b64 = os.environ.get("IOS_PROFILE_BASE64", "")
+b64 = re.sub(r"\s+", "", b64)  # remove newlines/spaces from copy/paste
+try:
+    data = base64.b64decode(b64, validate=True)
+except Exception as e:
+    print("❌ IOS_PROFILE_BASE64 is not valid base64:", e)
+    sys.exit(1)
+if len(data) < 32:
+    print(f"❌ Decoded provisioning profile is too small ({len(data)} bytes). Wrong secret value.")
+    sys.exit(1)
+with open(os.environ["PP_FILE"], "wb") as f:
+    f.write(data)
+print("✅ Provisioning profile decoded bytes:", len(data))
+PY
+
+          echo "Decoded profile file size:"
+          stat -f "%z bytes" "$PP_FILE" || wc -c "$PP_FILE"
+
+          # Convert CMS -> plist (this is where you were dying)
+          /usr/bin/security cms -D -i "$PP_FILE" > "$PLIST_FILE"
+
+          UUID=$(/usr/libexec/PlistBuddy -c 'Print:UUID' "$PLIST_FILE")
           cp "$PP_FILE" "$PP_DIR/$UUID.mobileprovision"
 
           echo "PROFILE_UUID=$UUID" >> "$GITHUB_ENV"
+          echo "PROFILE_UUID=$UUID"
 
       - name: 🔑 Decode App Store Connect API key (p8)
         shell: bash
@@ -307,6 +336,7 @@ jobs:
             ${{ env.ARCHIVE_INFO_PLIST }}
             ${{ env.ARCHIVE_PATH }}
             ${{ env.EXPORT_DIR }}
+            ${{ env.PROFILE_PLIST }}
 
       - name: 🧹 Cleanup keychain
         if: always()
