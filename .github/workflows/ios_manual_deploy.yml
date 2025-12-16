@@ -56,6 +56,16 @@ jobs:
           mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
           cp "$PROFILE_PATH" ~/Library/MobileDevice/Provisioning\ Profiles
 
+      - name: Ensure XcodeGen source dir exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -d "ios/JunoNativeApp" ]; then
+            echo "ios/JunoNativeApp missing. Creating it from ios/JunoNative..."
+            cp -R "ios/JunoNative" "ios/JunoNativeApp"
+          fi
+          ls -la ios
+      
       - name: Generate Xcode project
         run: |
           xcodegen generate --spec ios/JunoNativeApp.yml
