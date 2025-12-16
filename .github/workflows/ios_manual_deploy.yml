@@ -25,7 +25,8 @@ jobs:
       IOS_DIST_CERT_BASE64: ${{ secrets.IOS_DIST_CERT_BASE64 }}
       IOS_DIST_CERT_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
 
-      IOS_APPSTORE_PROFILE_BASE64: ${{ secrets.IOS_APPSTORE_PROFILE_BASE64 }}
+      # ✅ Renamed secret (provisioning profile .mobileprovision as BASE64)
+      IOS_PROFILE_BASE64: ${{ secrets.IOS_PROFILE_BASE64 }}
 
       KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
 
@@ -134,7 +135,6 @@ jobs:
             pod install --repo-update
           fi
 
-      # ✅ FIXED: create/unlock keychain only (NO partition list yet)
       - name: 🔐 Create temporary keychain
         shell: bash
         run: |
@@ -146,14 +146,12 @@ jobs:
           security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 
-          # Keep login keychain available too (avoids weird tool lookups)
           security list-keychains -d user -s "$KEYCHAIN_PATH" "$HOME/Library/Keychains/login.keychain-db"
           security default-keychain -s "$KEYCHAIN_PATH"
 
           echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
           echo "KEYCHAIN_PASSWORD=$KEYCHAIN_PASSWORD" >> "$GITHUB_ENV"
 
-      # ✅ FIXED: import first, THEN set partition list
       - name: 🪪 Decode and import signing certificate (p12) + enable codesign access
         shell: bash
         run: |
@@ -169,18 +167,15 @@ jobs:
             -T /usr/bin/xcodebuild \
             -T /usr/bin/productbuild
 
-          # Now the private key exists -> partition list works
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-
-          # Sanity check: ensure the signing identity is visible
           security find-identity -v -p codesigning "$KEYCHAIN_PATH"
 
-      - name: 📄 Decode provisioning profile
+      - name: 📄 Decode provisioning profile (App Store)
         shell: bash
         run: |
           set -euo pipefail
-          if [ -z "${IOS_APPSTORE_PROFILE_BASE64:-}" ]; then
-            echo "IOS_APPSTORE_PROFILE_BASE64 is empty. Set it in GitHub Secrets."
+          if [ -z "${IOS_PROFILE_BASE64:-}" ]; then
+            echo "IOS_PROFILE_BASE64 is empty. Set it in GitHub Secrets."
             exit 1
           fi
 
@@ -188,7 +183,7 @@ jobs:
           mkdir -p "$PP_DIR"
 
           PP_FILE="$RUNNER_TEMP/profile.mobileprovision"
-          echo "$IOS_APPSTORE_PROFILE_BASE64" | base64 --decode > "$PP_FILE"
+          echo "$IOS_PROFILE_BASE64" | base64 --decode > "$PP_FILE"
 
           UUID=$(/usr/bin/security cms -D -i "$PP_FILE" | /usr/libexec/PlistBuddy -c 'Print:UUID' /dev/stdin)
           cp "$PP_FILE" "$PP_DIR/$UUID.mobileprovision"
