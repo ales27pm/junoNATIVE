@@ -20,7 +20,10 @@ end
 
 project = Xcodeproj::Project.open(IOS_PROJ)
 
-target = project.targets.find { |t| t.isa == "PBXNativeTarget" && t.name == preferred_target }
+target = project.targets.find do |t|
+  t.isa == "PBXNativeTarget" && t.name == preferred_target
+end
+
 if target.nil?
   warn "❌ Could not find target '#{preferred_target}' in #{IOS_PROJ}"
   warn "   Targets: #{project.targets.map(&:name).join(', ')}"
@@ -29,38 +32,29 @@ end
 
 puts "✅ Ensuring shared scheme '#{scheme_name}' builds target '#{target.name}'"
 
-# Always generate a fresh scheme to avoid nil entries quirks across xcodeproj versions.
+# Generate a fresh scheme (avoids nil entries quirks and version differences).
 scheme = Xcodeproj::XCScheme.new
 
-# Add the app target to the build action (this creates build_action + entries safely)
+# This is the critical part: ensure the APP target is in the scheme's BuildAction.
 scheme.add_build_target(target)
 
-# Ensure archive action uses Release (what xcodebuild archive expects)
+# Ensure Archive builds Release.
 scheme.archive_action ||= Xcodeproj::XCScheme::ArchiveAction.new(nil)
 scheme.archive_action.build_configuration = "Release"
 
-# Keep these sane (not strictly required for CI export, but harmless)
-scheme.launch_action ||= Xcodeproj::XCScheme::LaunchAction.new(nil)
-scheme.launch_action.build_configuration = "Release"
-scheme.launch_action.runnable = Xcodeproj::XCScheme::BuildableProductRunnable.new(target)
-
-scheme.profile_action ||= Xcodeproj::XCScheme::ProfileAction.new(nil)
-scheme.profile_action.build_configuration = "Release"
-scheme.profile_action.runnable = Xcodeproj::XCScheme::BuildableProductRunnable.new(target)
-
+# Optional but harmless: keep analyze/test actions set to Release (no runnable setters needed).
 scheme.analyze_action ||= Xcodeproj::XCScheme::AnalyzeAction.new(nil)
 scheme.analyze_action.build_configuration = "Release"
 
 scheme.test_action ||= Xcodeproj::XCScheme::TestAction.new(nil)
 scheme.test_action.build_configuration = "Release"
 
-# Remove any old shared scheme file so we definitely overwrite
+# Write as a SHARED scheme (so CI sees it).
 scheme_dir  = File.join(IOS_PROJ, "xcshareddata", "xcschemes")
 scheme_path = File.join(scheme_dir, "#{scheme_name}.xcscheme")
 FileUtils.mkdir_p(scheme_dir)
 FileUtils.rm_f(scheme_path)
 
-# Save as a SHARED scheme
 scheme.save_as(IOS_PROJ, scheme_name, true)
 
 puts "✅ Shared scheme written: #{scheme_path}"
