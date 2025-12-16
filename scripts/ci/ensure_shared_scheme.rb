@@ -1,60 +1,121 @@
 #!/usr/bin/env ruby
-# frozen_string_literal: true
+# ------------------------------------------------------------
+# ensure_shared_scheme.rb
+#
+# Safely ensures a shared scheme exists and builds the app
+# WITHOUT touching nil build / launch actions.
+#
+# CI-safe, idempotent, Xcode-version-tolerant.
+# ------------------------------------------------------------
 
 require "xcodeproj"
 require "fileutils"
 
-ROOT_DIR = File.expand_path("../..", __dir__)
-IOS_PROJ = File.join(ROOT_DIR, "ios", "JunoNative.xcodeproj")
+PROJECT_PATH = "ios/JunoNative.xcodeproj"
+SCHEME_NAME  = "JunoNative"
 
-scheme_name = ENV["IOS_SCHEME"].to_s
-scheme_name = "JunoNative" if scheme_name.empty?
-
-preferred_target = ENV["IOS_APP_TARGET"].to_s
-preferred_target = "JunoNative" if preferred_target.empty?
-
-unless File.exist?(IOS_PROJ)
-  warn "❌ Xcode project not found: #{IOS_PROJ}"
-  exit 1
+unless File.exist?(PROJECT_PATH)
+  abort "❌ Xcode project not found at #{PROJECT_PATH}"
 end
 
-project = Xcodeproj::Project.open(IOS_PROJ)
+project = Xcodeproj::Project.open(PROJECT_PATH)
 
+# ------------------------------------------------------------
+# Locate application target
+# ------------------------------------------------------------
 target = project.targets.find do |t|
-  t.isa == "PBXNativeTarget" && t.name == preferred_target
+  t.product_type == "com.apple.product-type.application"
 end
 
-if target.nil?
-  warn "❌ Could not find target '#{preferred_target}' in #{IOS_PROJ}"
-  warn "   Targets: #{project.targets.map(&:name).join(', ')}"
-  exit 1
+unless target
+  abort "❌ No application target found. Did fix_ios_project.rb run?"
 end
 
-puts "✅ Ensuring shared scheme '#{scheme_name}' builds target '#{target.name}'"
+puts "✅ Found application target: #{target.name}"
 
-# Generate a fresh scheme (avoids nil entries quirks and version differences).
-scheme = Xcodeproj::XCScheme.new
+# ------------------------------------------------------------
+# Prepare scheme paths
+# ------------------------------------------------------------
+shared_dir = File.join(PROJECT_PATH, "xcshareddata", "xcschemes")
+FileUtils.mkdir_p(shared_dir)
 
-# This is the critical part: ensure the APP target is in the scheme's BuildAction.
-scheme.add_build_target(target)
+scheme_path = File.join(shared_dir, "#{SCHEME_NAME}.xcscheme")
 
-# Ensure Archive builds Release.
-scheme.archive_action ||= Xcodeproj::XCScheme::ArchiveAction.new(nil)
-scheme.archive_action.build_configuration = "Release"
+# ------------------------------------------------------------
+# Load or create scheme
+# ------------------------------------------------------------
+scheme =
+  if File.exist?(scheme_path)
+    Xcodeproj::XCScheme.new(scheme_path)
+  else
+    Xcodeproj::XCScheme.new
+  end
 
-# Optional but harmless: keep analyze/test actions set to Release (no runnable setters needed).
-scheme.analyze_action ||= Xcodeproj::XCScheme::AnalyzeAction.new(nil)
-scheme.analyze_action.build_configuration = "Release"
+# ------------------------------------------------------------
+# Build Action (SAFE)
+# ------------------------------------------------------------
+build_action = scheme.build_action
 
-scheme.test_action ||= Xcodeproj::XCScheme::TestAction.new(nil)
-scheme.test_action.build_configuration = "Release"
+unless build_action
+  build_action = Xcodeproj::XCScheme::BuildAction.new
+  scheme.build_action = build_action
+end
 
-# Write as a SHARED scheme (so CI sees it).
-scheme_dir  = File.join(IOS_PROJ, "xcshareddata", "xcschemes")
-scheme_path = File.join(scheme_dir, "#{scheme_name}.xcscheme")
-FileUtils.mkdir_p(scheme_dir)
-FileUtils.rm_f(scheme_path)
+entries = build_action.entries || []
 
-scheme.save_as(IOS_PROJ, scheme_name, true)
+# Remove stale entries referencing old static library
+entries.reject! do |e|
+  e.buildable_references.any? do |br|
+    br.target_name != target.name
+  end
+end
 
-puts "✅ Shared scheme written: #{scheme_path}"
+# Add entry if missing
+unless entries.any? { |e| e.buildable_references.any? { |br| br.target_name == target.name } }
+  entries << Xcodeproj::XCScheme::BuildAction::Entry.new(
+    target,
+    true,  # build_for_running
+    true,  # build_for_testing
+    true,  # build_for_profiling
+    true,  # build_for_archiving
+    true   # build_for_analyzing
+  )
+end
+
+build_action.entries = entries
+scheme.build_action  = build_action
+
+# ------------------------------------------------------------
+# Launch Action (NO runnable=, NO crashes)
+# ------------------------------------------------------------
+launch_action = scheme.launch_action ||
+                Xcodeproj::XCScheme::LaunchAction.new
+
+# IMPORTANT:
+# We DO NOT set `runnable=` because it is not supported
+# consistently across Xcodeproj versions.
+launch_action.build_configuration ||= "Release"
+launch_action.selected_debugger_identifier ||= "Xcode.DebuggerFoundation.Debugger.LLDB"
+launch_action.selected_launcher_identifier ||= "Xcode.DebuggerFoundation.Launcher.LLDB"
+launch_action.launch_style ||= "0"
+launch_action.ignores_persistent_state_on_launch ||= false
+launch_action.debug_document_versioning ||= true
+
+scheme.launch_action = launch_action
+
+# ------------------------------------------------------------
+# Archive Action
+# ------------------------------------------------------------
+archive_action = scheme.archive_action ||
+                 Xcodeproj::XCScheme::ArchiveAction.new
+
+archive_action.build_configuration ||= "Release"
+archive_action.reveal_archive_in_organizer ||= true
+scheme.archive_action = archive_action
+
+# ------------------------------------------------------------
+# Save
+# ------------------------------------------------------------
+scheme.save_as(PROJECT_PATH, SCHEME_NAME, true)
+
+puts "✅ Shared scheme '#{SCHEME_NAME}' ensured successfully"
