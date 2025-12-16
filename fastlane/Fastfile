@@ -1,11 +1,13 @@
 # fastlane/Fastfile
 
 default_platform(:ios)
+opt_out_usage
 
 require "tmpdir"
 require "base64"
 require "fileutils"
 require "shellwords"
+require "spaceship"
 
 ROOT_DIR = File.expand_path("..", __dir__)
 
@@ -88,79 +90,90 @@ def find_apple_distribution_identity!
   m[1]
 end
 
+def validate_archive_has_app!(archive_path)
+  apps_dir = File.join(archive_path, "Products", "Applications")
+  unless Dir.exist?(apps_dir)
+    UI.user_error!(<<~MSG)
+      Archive validation failed: Archive is missing Products/Applications/*.app.
+      This is a GENERIC archive and cannot be exported.
+
+      Root causes:
+      - App target has SKIP_INSTALL=YES (must be NO for Archive/Release)
+      - Scheme is archiving an aggregate/framework/Pods target (not the app)
+
+      Archive path: #{archive_path}
+    MSG
+  end
+
+  apps = Dir.glob(File.join(apps_dir, "*.app"))
+  UI.user_error!("Archive has Products/Applications but no .app inside: #{apps_dir}") if apps.empty?
+  UI.success("✅ Archive contains app: #{File.basename(apps.first)}")
+end
+
+def write_export_options_plist!(path:, team_id:, bundle_id:, profile_name:)
+  # Minimal, strict XML plist to avoid schema weirdness.
+  xml = <<~PLIST
+    <?xml version="1.0" encoding="UTF-8"?>
+    <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+    <plist version="1.0">
+      <dict>
+        <key>method</key>
+        <string>app-store</string>
+        <key>signingStyle</key>
+        <string>manual</string>
+        <key>teamID</key>
+        <string>#{team_id}</string>
+        <key>provisioningProfiles</key>
+        <dict>
+          <key>#{bundle_id}</key>
+          <string>#{profile_name}</string>
+        </dict>
+        <key>uploadSymbols</key>
+        <true/>
+        <key>uploadBitcode</key>
+        <false/>
+      </dict>
+    </plist>
+  PLIST
+
+  FileUtils.mkdir_p(File.dirname(path))
+  File.write(path, xml)
+end
+
 platform :ios do
   ############################################################
   # Main CI lane
   ############################################################
-  desc "CI pipeline: verify ASC, certs, profile; fix xcodeproj; build IPA; upload TestFlight"
+  desc "CI pipeline: verify ASC, certs, profile; patch xcodeproj; archive; export IPA; upload TestFlight"
   lane :ios_ci do
     UI.header("🚀 JunoNative iOS CI")
 
+    # Make New Architecture explicit everywhere
+    ENV["RCT_NEW_ARCH_ENABLED"] = "1"
+
     verify_appstore_connect_no_sigh
 
-    asc_api_key     = Actions.lane_context[:ASC_API_KEY]
-    profile_name    = Actions.lane_context[:PROFILE_NAME]
+    asc_api_key  = Actions.lane_context[:ASC_API_KEY]
+    profile_name = Actions.lane_context[:PROFILE_NAME]
 
-    app_identifier  = ensure_any!("App bundle id", "APP_IDENTIFIER")
-    team_id         = ensure_any!("Apple Team ID", "APPLE_TEAM_ID")
+    bundle_id = ensure_any!("App bundle id", "APP_IDENTIFIER", "APP_IDENTIFIER")
+    team_id   = ensure_any!("Apple Team ID", "APPLE_TEAM_ID")
 
     prepare_build_assets
     install_cocoapods
 
-    # Critical: fixes "generic archive" (missing Products/Applications/*.app)
+    # Patch Xcode project to avoid "generic archive"
     fix_xcodeproj_settings
 
     compile_swift_sources
 
-    UI.message("📦 Building archive + IPA with gym")
-
-    codesign_identity = find_apple_distribution_identity!
-    UI.message("🔏 Using codesigning identity: #{codesign_identity}")
-
-    signing_xcargs = [
-      "DEVELOPMENT_TEAM=#{team_id}",
-      "CODE_SIGN_STYLE=Manual",
-      "CODE_SIGN_IDENTITY=#{Shellwords.escape(codesign_identity)}",
-      "PROVISIONING_PROFILE_SPECIFIER=#{Shellwords.escape(profile_name)}"
-    ].join(" ")
-
-    ios_build_options = {
-      workspace: File.join("ios", "JunoNative.xcworkspace"),
-      scheme: "JunoNative",
-      configuration: "Release",
-      sdk: "iphoneos",
-      clean: true,
-
-      # DO NOT pass api_key here (build_app doesn't accept it)
-      export_method: "app-store",
-      skip_profile_detection: true,
-      export_team_id: team_id,
-
-      export_options: {
-        signingStyle: "manual",
-        teamID: team_id,
-        provisioningProfiles: {
-          app_identifier => profile_name
-        },
-        uploadSymbols: true,
-        uploadBitcode: false
-      },
-
-      output_directory: File.join(ROOT_DIR, "fastlane", "build", "ios"),
-      output_name: "JunoNative.ipa",
-
-      include_symbols: true,
-      include_bitcode: false,
-      silent: false,
-
-      xcargs: signing_xcargs
-    }
-
-    ipa_path = build_app(ios_build_options)
-    UI.success("✅ IPA built at #{ipa_path}")
+    ipa_path = archive_and_export_ipa(
+      team_id: team_id,
+      bundle_id: bundle_id,
+      profile_name: profile_name
+    )
 
     UI.message("🕊  Uploading to TestFlight")
-
     upload_to_testflight(
       ipa: ipa_path,
       api_key: asc_api_key,
@@ -178,11 +191,12 @@ platform :ios do
   private_lane :verify_appstore_connect_no_sigh do
     UI.header("🔍 Verifying ASC credentials, certificate & profile (no sigh)")
 
-    team_id        = ensure_any!("Apple Team ID", "APPLE_TEAM_ID")
-    app_identifier = ensure_any!("App bundle id", "APP_IDENTIFIER")
+    team_id   = ensure_any!("Apple Team ID", "APPLE_TEAM_ID")
+    bundle_id = ensure_any!("App bundle id", "APP_IDENTIFIER")
 
     asc_cfg = resolve_asc_config
 
+    # Accept both naming conventions (your logs show mixed env names in different workflows)
     cert_b64 = ensure_any!("iOS distribution p12 base64", "IOS_DIST_CERT_BASE64", "IOS_CERT_P12_BASE64")
     cert_pw  = ensure_any!("iOS distribution p12 password", "IOS_DIST_CERT_PASSWORD", "IOS_CERT_PASSWORD")
     prof_b64 = ensure_any!("iOS provisioning profile base64", "IOS_PROFILE_BASE64", "IOS_PROVISIONING_PROFILE_BASE64")
@@ -195,10 +209,9 @@ platform :ios do
     )
     Actions.lane_context[:ASC_API_KEY] = api_key
 
-    # Sanity: fetch app by bundle id
-    apps = Spaceship::ConnectAPI::App.all(filter: { bundleId: app_identifier })
+    apps = Spaceship::ConnectAPI::App.all(filter: { bundleId: bundle_id })
     app = apps.first
-    UI.user_error!("App with identifier #{app_identifier} not found in this ASC account") if app.nil?
+    UI.user_error!("App with identifier #{bundle_id} not found in this ASC account") if app.nil?
     UI.success("✅ Authenticated — Found app #{app.name} (#{app.bundle_id})")
 
     UI.header("🔐 Verifying distribution certificate (.p12)")
@@ -212,6 +225,9 @@ platform :ios do
     keychain_name     = "ios-build.keychain-db"
     keychain_password = env_any("KEYCHAIN_PASSWORD", "MATCH_KEYCHAIN_PASSWORD")
     keychain_password = "fastlane_ci_temp" if keychain_password.to_s.empty?
+
+    # Ensure a clean keychain every run
+    delete_keychain(name: keychain_name) rescue nil
 
     create_keychain(
       name: keychain_name,
@@ -239,7 +255,7 @@ platform :ios do
     profile_meta = install_profile_from_base64!(
       profile_base64: prof_b64,
       expected_team_id: team_id,
-      expected_bundle_id: app_identifier
+      expected_bundle_id: bundle_id
     )
 
     Actions.lane_context[:PROFILE_UUID] = profile_meta[:uuid]
@@ -287,13 +303,18 @@ platform :ios do
   end
 
   ############################################################
-  # CocoaPods install
+  # CocoaPods install (New Arch enabled)
   ############################################################
   private_lane :install_cocoapods do
-    UI.header("📦 Installing CocoaPods dependencies")
+    UI.header("📦 Installing CocoaPods dependencies (New Arch Enabled)")
     ios_dir = File.join(ROOT_DIR, "ios")
-    Dir.chdir(ios_dir) { sh("bundle exec pod install --repo-update") }
-    UI.success("✅ Pods installed")
+
+    # Make sure codegen actually runs during pod install
+    Dir.chdir(ios_dir) do
+      sh("RCT_NEW_ARCH_ENABLED=1 bundle exec pod install --repo-update")
+    end
+
+    UI.success("✅ Pods installed with New Architecture enabled")
   end
 
   ############################################################
@@ -308,7 +329,7 @@ platform :ios do
     xcpretty = system("which xcpretty >/dev/null 2>&1")
     pretty   = xcpretty ? " | xcpretty --no-color" : ""
 
-    common_flags = 'CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=""'
+    common_flags = 'CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" RCT_NEW_ARCH_ENABLED=1'
 
     cmd =
       if File.exist?(ws)
@@ -321,5 +342,72 @@ platform :ios do
 
     sh("set -o pipefail && #{cmd}#{pretty}")
     UI.success("✅ Preflight build succeeded (no signing)")
+  end
+
+  ############################################################
+  # Archive + Export IPA (avoid gym export edge-cases)
+  ############################################################
+  private_lane :archive_and_export_ipa do |opts|
+    UI.header("📦 Archiving + Exporting IPA via xcodebuild (deterministic)")
+
+    team_id      = opts.fetch(:team_id)
+    bundle_id    = opts.fetch(:bundle_id)
+    profile_name = opts.fetch(:profile_name)
+
+    codesign_identity = find_apple_distribution_identity!
+    UI.message("🔏 Using codesigning identity: #{codesign_identity}")
+
+    ws = File.join(ROOT_DIR, "ios", "JunoNative.xcworkspace")
+    pr = File.join(ROOT_DIR, "ios", "JunoNative.xcodeproj")
+
+    build_root   = File.join(ROOT_DIR, "fastlane", "build", "ios")
+    archive_path = File.join(build_root, "JunoNative.xcarchive")
+    export_dir   = File.join(build_root, "export")
+    export_plist = File.join(build_root, "exportOptions.generated.plist")
+
+    FileUtils.rm_rf(build_root)
+    FileUtils.mkdir_p(build_root)
+
+    write_export_options_plist!(
+      path: export_plist,
+      team_id: team_id,
+      bundle_id: bundle_id,
+      profile_name: profile_name
+    )
+
+    # Strong overrides to prevent "generic archive"
+    archive_xcargs = [
+      "DEVELOPMENT_TEAM=#{team_id}",
+      "CODE_SIGN_STYLE=Manual",
+      "CODE_SIGN_IDENTITY=#{Shellwords.escape(codesign_identity)}",
+      "PROVISIONING_PROFILE_SPECIFIER=#{Shellwords.escape(profile_name)}",
+      "SKIP_INSTALL=NO",
+      "INSTALL_PATH=/Applications",
+      "RCT_NEW_ARCH_ENABLED=1"
+    ].join(" ")
+
+    archive_cmd =
+      if File.exist?(ws)
+        %Q[xcodebuild -workspace "#{ws}" -scheme JunoNative -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -archivePath "#{archive_path}" #{archive_xcargs} archive]
+      elsif File.exist?(pr)
+        %Q[xcodebuild -project "#{pr}" -scheme JunoNative -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -archivePath "#{archive_path}" #{archive_xcargs} archive]
+      else
+        UI.user_error!("No Xcode workspace or project found at ios/JunoNative.xcworkspace or ios/JunoNative.xcodeproj")
+      end
+
+    sh("set -o pipefail && #{archive_cmd}")
+
+    validate_archive_has_app!(archive_path)
+
+    FileUtils.mkdir_p(export_dir)
+
+    export_cmd = %Q[xcodebuild -exportArchive -archivePath "#{archive_path}" -exportPath "#{export_dir}" -exportOptionsPlist "#{export_plist}"]
+    sh("set -o pipefail && #{export_cmd}")
+
+    ipa = Dir.glob(File.join(export_dir, "*.ipa")).first
+    UI.user_error!("Export finished but no .ipa found in #{export_dir}") if ipa.nil?
+
+    UI.success("✅ IPA exported at #{ipa}")
+    ipa
   end
 end
