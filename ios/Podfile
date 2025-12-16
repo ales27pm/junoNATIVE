@@ -38,31 +38,35 @@ target 'JunoNative' do
   )
 
   post_install do |installer|
-    # --- React Native / CocoaPods standard hooks (keep yours if you have them) ---
-    # If you already have react_native_post_install(installer) or similar,
-    # keep it and place the SKIP_INSTALL enforcement AFTER it.
-    #
-    # Example:
-    # react_native_post_install(installer)
+    # --- Keep RN's own post_install first ---
+    react_native_post_install(installer)
 
-    # 1) Force ALL Pods (dependencies) to be non-installable (prevents "Generic Archive")
+    # --- 1) Keep your iOS deployment target enforcement ---
     installer.pods_project.targets.each do |target|
-      target.build_configurations.each do |config|
-        config.build_settings['SKIP_INSTALL'] = 'YES'
+      target.build_configurations.each do |cfg|
+        cfg.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.1'
       end
     end
 
-    # 2) Force MAIN APP target to be installable so the archive contains Products/Applications/*.app
+    # --- 2) CRITICAL: make ALL Pods non-installable (prevents "Generic Archive") ---
+    installer.pods_project.targets.each do |target|
+      target.build_configurations.each do |cfg|
+        cfg.build_settings['SKIP_INSTALL'] = 'YES'
+      end
+    end
+
+    # --- 3) CRITICAL: main APP target must be installable in Release ---
     installer.aggregate_targets.each do |aggregate|
-      aggregate.user_project.targets.each do |target|
-        next unless target.name == 'JunoNative' # MUST match your main app target name exactly
+      aggregate.user_project.targets.each do |t|
+        next unless t.name == 'JunoNative' # must match your app target exactly
 
-        target.build_configurations.each do |config|
-          next unless config.name == 'Release' # archive uses Release in your workflow
+        t.build_configurations.each do |cfg|
+          next unless cfg.name == 'Release' # your CI archives Release
 
-          config.build_settings['SKIP_INSTALL'] = 'NO'
-          config.build_settings['INSTALL_PATH'] = '$(LOCAL_APPS_DIR)'
+          cfg.build_settings['SKIP_INSTALL'] = 'NO'
+          cfg.build_settings['INSTALL_PATH'] = '$(LOCAL_APPS_DIR)'
         end
       end
     end
   end
+end
