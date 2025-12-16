@@ -112,27 +112,27 @@ jobs:
           fi
 
           cat > "$EXPORT_PLIST" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>method</key>
-  <string>app-store</string>
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key>
+            <string>app-store</string>
 
-  <key>teamID</key>
-  <string>${APPLE_TEAM_ID}</string>
+            <key>teamID</key>
+            <string>${APPLE_TEAM_ID}</string>
 
-  <key>signingStyle</key>
-  <string>manual</string>
+            <key>signingStyle</key>
+            <string>manual</string>
 
-  <key>provisioningProfiles</key>
-  <dict>
-    <key>${APP_IDENTIFIER}</key>
-    <string>${PROFILE_NAME}</string>
-  </dict>
-</dict>
-</plist>
-PLIST
+            <key>provisioningProfiles</key>
+            <dict>
+              <key>${APP_IDENTIFIER}</key>
+              <string>${PROFILE_NAME}</string>
+            </dict>
+          </dict>
+          </plist>
+          PLIST
 
           plutil -lint "$EXPORT_PLIST"
           echo "::notice::ExportOptions.plist ready at $EXPORT_PLIST"
