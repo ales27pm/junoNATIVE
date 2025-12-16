@@ -24,18 +24,29 @@ jobs:
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
       IOS_SCHEME: JunoNative
-      IOS_WORKSPACE: ios/JunoNative.xcworkspace
       XCODEGEN_SPEC: ios/JunoNativeApp.yml
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Print runner/tool versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          sw_vers || true
+          xcodebuild -version
+          xcode-select -p
+          ruby -v || true
+          node -v || true
+          npm -v || true
+          yarn -v || true
+          python3 -V || true
+
       - name: Install dependencies (xcodegen, cocoapods)
         shell: bash
         run: |
           set -euo pipefail
-          brew update
           brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
           brew list cocoapods >/dev/null 2>&1 || brew install cocoapods
           xcodegen --version
@@ -81,20 +92,30 @@ jobs:
             exit 1
           fi
           xcodegen generate --spec "${XCODEGEN_SPEC}"
+          find ios -maxdepth 2 -name "*.xcodeproj" -print || true
 
       - name: Install CocoaPods (creates/updates workspace)
         shell: bash
         run: |
           set -euo pipefail
           cd ios
-          pod repo update
           pod install --verbose
           cd ..
-          if [ ! -f "${IOS_WORKSPACE}" ]; then
-            echo "::error::Workspace not found after pod install: ${IOS_WORKSPACE}"
-            find ios -maxdepth 2 -type f -name "*.xcworkspace" -print || true
+
+          echo "::group::Workspaces detected"
+          find ios -maxdepth 2 -name "*.xcworkspace" -print || true
+          echo "::endgroup::"
+
+          # IMPORTANT: .xcworkspace is a DIRECTORY, not a file
+          WORKSPACE_DIR="$(find ios -maxdepth 2 -type d -name '*.xcworkspace' -print | head -n 1)"
+          if [ -z "${WORKSPACE_DIR:-}" ] || [ ! -d "${WORKSPACE_DIR}" ]; then
+            echo "::error::No .xcworkspace directory found after pod install"
+            ls -la ios || true
             exit 1
           fi
+
+          echo "IOS_WORKSPACE=${WORKSPACE_DIR}" >> "$GITHUB_ENV"
+          echo "::notice::Using workspace: ${WORKSPACE_DIR}"
 
       - name: Decode signing assets and create keychain
         shell: bash
@@ -151,7 +172,7 @@ jobs:
           echo "PROFILE_UUID=$PROFILE_UUID" >> "$GITHUB_ENV"
           echo "::notice::Installed provisioning profile: $PROFILE_NAME ($PROFILE_UUID)"
 
-      - name: Create ExportOptions.plist (manual signing, no heredoc)
+      - name: Create ExportOptions.plist (manual signing)
         shell: bash
         run: |
           set -euo pipefail
@@ -169,7 +190,7 @@ jobs:
           echo "EXPORT_PLIST=$EXPORT_PLIST" >> "$GITHUB_ENV"
           echo "::notice::ExportOptions.plist ready at $EXPORT_PLIST"
 
-      - name: Build archive
+      - name: Build archive (must be an app archive)
         shell: bash
         run: |
           set -euo pipefail
@@ -199,19 +220,17 @@ jobs:
           set -euo pipefail
 
           if [ ! -d "$ARCHIVE_PATH/Products/Applications" ]; then
-            echo "::error::Archive has no Products/Applications. This is not an app archive (likely generic/framework archive)."
+            echo "::error::Archive has no Products/Applications. This is not an app archive (generic archive)."
+            echo "::error::That can cause the classic export error: method expected {}."
             find "$ARCHIVE_PATH/Products" -maxdepth 4 -print || true
             exit 1
           fi
 
-          echo "::group::Products/Applications"
-          ls -la "$ARCHIVE_PATH/Products/Applications" || true
-          echo "::endgroup::"
-
           APPS_FOUND="$(find "$ARCHIVE_PATH/Products/Applications" -maxdepth 1 -name "*.app" | wc -l | tr -d ' ')"
           if [ "$APPS_FOUND" != "1" ]; then
             echo "::error::Expected exactly 1 .app in Products/Applications, found $APPS_FOUND."
-            echo "::error::This usually means your scheme archives extra targets or non-app targets have Skip Install = NO."
+            echo "::error::Fix in Xcode project: non-app targets should have Skip Install = YES; main app target Skip Install = NO; scheme should archive the app."
+            find "$ARCHIVE_PATH/Products/Applications" -maxdepth 2 -print || true
             exit 1
           fi
 
@@ -233,6 +252,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
+          for v in APP_STORE_CONNECT_API_KEY_ID APP_STORE_CONNECT_API_ISSUER_ID APP_STORE_CONNECT_API_KEY_BASE64; do
+            if [[ -z "${!v:-}" ]]; then
+              echo "::error::Secret/env $v is empty"
+              exit 1
+            fi
+          done
 
           IPA_PATH="$(find "$EXPORT_PATH" -maxdepth 3 -name "*.ipa" | head -n 1)"
           if [[ -z "${IPA_PATH:-}" || ! -f "$IPA_PATH" ]]; then
