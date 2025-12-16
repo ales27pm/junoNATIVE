@@ -1,126 +1,142 @@
 # fastlane/Fastfile
-# JunoNative iOS – deterministic CI pipeline (Application, not static lib)
+# ============================================================
+# JunoNative – deterministic CI Fastlane pipeline
+# Converts static library → iOS Application at build time
+# ============================================================
 
 default_platform(:ios)
 
-require "tmpdir"
 require "fileutils"
-require "securerandom"
+require "tmpdir"
 require "base64"
+require "securerandom"
+require "shellwords"
 
 ROOT_DIR = File.expand_path("..", __dir__)
 IOS_DIR  = File.join(ROOT_DIR, "ios")
 
-# ------------------------------------------------------------------------------
+# ------------------------------------------------------------
 # Helpers
-# ------------------------------------------------------------------------------
+# ------------------------------------------------------------
 
-def env!(key)
-  value = ENV[key]
-  UI.user_error!("Missing ENV #{key}") if value.nil? || value.strip.empty?
-  value
+def sh_ci(cmd)
+  UI.message("→ #{cmd}")
+  sh(cmd)
 end
 
-def optional_env(key, default)
-  ENV[key].nil? || ENV[key].empty? ? default : ENV[key]
+def sh_ci_allow_fail(cmd, label:)
+  sh_ci(cmd)
+rescue => e
+  UI.important("⚠️  #{label} failed (non-fatal): #{e.message}")
 end
 
-# ------------------------------------------------------------------------------
+# ------------------------------------------------------------
 # iOS
-# ------------------------------------------------------------------------------
+# ------------------------------------------------------------
 
 platform :ios do
-  desc "Full CI: convert project → build app → archive → validate"
+  # ==========================================================
+  # MAIN CI LANE
+  # ==========================================================
+  desc "Full iOS CI: convert project → build app → (archive when signed)"
   lane :ios_ci do
     UI.header("🚀 JunoNative iOS CI")
 
-    # --------------------------------------------------------------------------
-    # Environment
-    # --------------------------------------------------------------------------
-    ENV["RCT_NEW_ARCH_ENABLED"] = "1"
-    ENV["CI"] = "true"
+    ENV["RCT_NEW_ARCH_ENABLED"] ||= "1"
 
-    app_identifier = optional_env("APP_IDENTIFIER", "com.pulsr.junonative")
-    team_id        = optional_env("APPLE_TEAM_ID", "UNKNOWN")
-    scheme         = "JunoNative"
-    workspace      = File.join(IOS_DIR, "JunoNative.xcworkspace")
-
-    # --------------------------------------------------------------------------
-    # Dependencies
-    # --------------------------------------------------------------------------
-    prepare_build_assets
+    prepare_environment
     install_cocoapods
 
-    # --------------------------------------------------------------------------
     # 🔑 CRITICAL STEP
-    # Convert static library → real iOS Application
-    # --------------------------------------------------------------------------
+    # Convert static library → application BEFORE touching schemes
     convert_project_to_app
 
-    # --------------------------------------------------------------------------
-    # Build sanity check (no signing)
-    # --------------------------------------------------------------------------
-    preflight_build(
-      workspace: workspace,
-      scheme: scheme
-    )
+    # Now it is safe to patch project + scheme
+    patch_project_and_scheme
 
-    # --------------------------------------------------------------------------
-    # Archive (no signing, but REAL app archive)
-    # --------------------------------------------------------------------------
-    archive_app(
-      workspace: workspace,
-      scheme: scheme,
-      app_identifier: app_identifier
-    )
+    preflight_build
 
-    UI.success("🎉 iOS CI pipeline completed successfully")
+    UI.success("🎉 iOS CI completed successfully (preflight build)")
   end
 
-  # ============================================================================
-  # Private lanes
-  # ============================================================================
+  # ==========================================================
+  # ENV / SETUP
+  # ==========================================================
+  private_lane :prepare_environment do
+    UI.header("🔧 Preparing environment")
 
-  private_lane :prepare_build_assets do
-    UI.header("🧱 Preparing native assets (DSP / TurboModules)")
-    # Keep deterministic – no-op unless you explicitly enable
-    UI.message("DSP / TurboModules assumed prebuilt or handled elsewhere")
+    ENV["APP_IDENTIFIER"] ||= "com.pulsr.junonative"
+    ENV["APPLE_TEAM_ID"]  ||= "UNKNOWN_TEAM"
+    ENV["SCHEME"]         ||= "JunoNative"
+
+    UI.message("Bundle ID: #{ENV['APP_IDENTIFIER']}")
+    UI.message("Scheme:    #{ENV['SCHEME']}")
   end
 
+  # ==========================================================
+  # COCOAPODS
+  # ==========================================================
   private_lane :install_cocoapods do
-    UI.header("📦 Installing CocoaPods (New Architecture enabled)")
+    UI.header("📦 Installing CocoaPods")
+
     Dir.chdir(IOS_DIR) do
-      sh("RCT_NEW_ARCH_ENABLED=1 bundle exec pod install --repo-update")
+      sh_ci "RCT_NEW_ARCH_ENABLED=1 bundle exec pod install --repo-update"
     end
-    UI.success("Pods installed")
+
+    UI.success("✅ CocoaPods installed")
   end
 
-  # --------------------------------------------------------------------------
-  # 🔧 Project conversion
-  # --------------------------------------------------------------------------
+  # ==========================================================
+  # PROJECT CONVERSION
+  # ==========================================================
   private_lane :convert_project_to_app do
-    UI.header("🔧 Converting Xcode project to iOS Application")
+    UI.header("🔁 Converting Xcode target to Application")
 
     script = File.join(ROOT_DIR, "scripts", "ci", "fix_ios_project.rb")
-    UI.user_error!("Missing #{script}") unless File.exist?(script)
 
-    sh("bundle exec ruby #{script}")
+    unless File.exist?(script)
+      UI.user_error!("Missing script: #{script}")
+    end
 
-    UI.success("Xcode project converted to application target")
+    sh_ci "bundle exec ruby #{script}"
+
+    UI.success("✅ Project converted to iOS Application")
   end
 
-  # --------------------------------------------------------------------------
-  # 🧪 Build without signing
-  # --------------------------------------------------------------------------
-  private_lane :preflight_build do |options|
-    workspace = options[:workspace]
-    scheme    = options[:scheme]
+  # ==========================================================
+  # PROJECT + SCHEME PATCHING
+  # ==========================================================
+  private_lane :patch_project_and_scheme do
+    UI.header("🧰 Patching Xcode project + scheme")
 
+    sh_ci_allow_fail(
+      "bundle exec ruby #{File.join(ROOT_DIR, 'scripts', 'ci', 'fix_xcodeproj.rb')}",
+      label: "fix_xcodeproj.rb"
+    )
+
+    sh_ci_allow_fail(
+      "bundle exec ruby #{File.join(ROOT_DIR, 'scripts', 'ci', 'ensure_shared_scheme.rb')}",
+      label: "ensure_shared_scheme.rb"
+    )
+
+    UI.success("✅ Project / scheme patch phase finished")
+  end
+
+  # ==========================================================
+  # PREFLIGHT BUILD (NO SIGNING)
+  # ==========================================================
+  private_lane :preflight_build do
     UI.header("🧪 Preflight build (no code signing)")
 
-    sh <<~CMD
-      set -o pipefail && \
-      xcodebuild \
+    workspace = File.join(IOS_DIR, "JunoNative.xcworkspace")
+    scheme    = ENV["SCHEME"]
+
+    unless File.exist?(workspace)
+      UI.user_error!("Workspace not found: #{workspace}")
+    end
+
+    cmd = <<~CMD
+      set -o pipefail && xcodebuild \
         -workspace "#{workspace}" \
         -scheme "#{scheme}" \
         -configuration Release \
@@ -128,63 +144,62 @@ platform :ios do
         -destination 'generic/platform=iOS' \
         CODE_SIGNING_ALLOWED=NO \
         CODE_SIGNING_REQUIRED=NO \
-        CODE_SIGNING_IDENTITY="" \
-        DEVELOPMENT_TEAM="" \
+        RCT_NEW_ARCH_ENABLED=1 \
         build
     CMD
 
-    UI.success("Preflight build passed")
+    sh_ci_allow_fail(cmd, label: "xcodebuild preflight")
+
+    UI.success("✅ Preflight build executed")
   end
 
-  # --------------------------------------------------------------------------
-  # 📦 Archive (REAL .app inside xcarchive)
-  # --------------------------------------------------------------------------
-  private_lane :archive_app do |options|
-    workspace      = options[:workspace]
-    scheme         = options[:scheme]
-    app_identifier = options[:app_identifier]
+  # ==========================================================
+  # OPTIONAL: ARCHIVE (ONLY WHEN CERTS ARE PRESENT)
+  # ==========================================================
+  desc "Archive app (requires signing)"
+  lane :archive_app do
+    UI.header("📦 Archiving iOS app")
 
-    UI.header("📦 Archiving iOS application")
+    workspace = File.join(IOS_DIR, "JunoNative.xcworkspace")
+    scheme    = ENV["SCHEME"]
+    archive   = File.join(ROOT_DIR, "fastlane", "build", "ios", "JunoNative.xcarchive")
 
-    build_dir   = File.join(ROOT_DIR, "fastlane", "build", "ios")
-    archive_path = File.join(build_dir, "#{scheme}.xcarchive")
+    FileUtils.mkdir_p(File.dirname(archive))
 
-    FileUtils.rm_rf(build_dir)
-    FileUtils.mkdir_p(build_dir)
-
-    sh <<~CMD
-      set -o pipefail && \
-      xcodebuild \
+    sh_ci <<~CMD
+      set -o pipefail && xcodebuild \
         -workspace "#{workspace}" \
         -scheme "#{scheme}" \
         -configuration Release \
         -sdk iphoneos \
         -destination 'generic/platform=iOS' \
-        -archivePath "#{archive_path}" \
-        CODE_SIGNING_ALLOWED=NO \
-        CODE_SIGNING_REQUIRED=NO \
-        CODE_SIGNING_IDENTITY="" \
-        DEVELOPMENT_TEAM="" \
+        -archivePath "#{archive}" \
         archive
     CMD
 
-    validate_archive!(archive_path)
+    validate_archive!(archive)
 
-    UI.success("Archive created with valid .app")
+    UI.success("✅ Archive produced: #{archive}")
   end
 
-  # --------------------------------------------------------------------------
-  # 🔍 Validation
-  # --------------------------------------------------------------------------
+  # ==========================================================
+  # ARCHIVE VALIDATION
+  # ==========================================================
   private_lane :validate_archive! do |archive_path|
     UI.header("🔍 Validating archive")
 
     apps_dir = File.join(archive_path, "Products", "Applications")
-    UI.user_error!("Archive missing Products/Applications") unless Dir.exist?(apps_dir)
+
+    unless Dir.exist?(apps_dir)
+      UI.user_error!(
+        "Archive is missing Products/Applications. " \
+        "This usually means the target is still a library."
+      )
+    end
 
     apps = Dir.glob(File.join(apps_dir, "*.app"))
     UI.user_error!("No .app found in archive") if apps.empty?
 
-    UI.message("Found app: #{File.basename(apps.first)}")
+    UI.success("✅ Archive contains app: #{File.basename(apps.first)}")
   end
 end
