@@ -6,437 +6,148 @@ require "fileutils"
 require "shellwords"
 
 ROOT_DIR = File.expand_path("..", __dir__)
-IOS_DIR  = File.join(ROOT_DIR, "ios")
 
-############################################################
-# Helpers
-############################################################
-
+#######################
+# Helper Methods
+#######################
 def env_any(*keys)
-  keys.each do |k|
-    v = ENV[k].to_s
-    return v unless v.empty?
-  end
-  ""
+  keys.map { |k| ENV[k].to_s }.find { |v| !v.empty? } || ""
 end
 
 def ensure_any!(label, *keys)
-  v = env_any(*keys)
-  UI.user_error!("Missing #{label}. Provide one of: #{keys.join(', ')}") if v.empty?
-  v
+  val = env_any(*keys)
+  UI.user_error!("Missing #{label}. Provide one of: #{keys.join(', ')}") if val.empty?
+  val
 end
 
 def resolve_asc_config
-  key_id    = ensure_any!("ASC key id", "APP_STORE_CONNECT_API_KEY_ID", "APPLE_KEY_ID")
-  issuer_id = ensure_any!("ASC issuer id", "APP_STORE_CONNECT_API_KEY_ISSUER_ID", "APPLE_ISSUER_ID")
+  key_id    = ensure_any!("ASC key id",            "APP_STORE_CONNECT_API_KEY_ID", "APPLE_KEY_ID")
+  issuer_id = ensure_any!("ASC issuer id",         "APP_STORE_CONNECT_API_KEY_ISSUER_ID", "APPLE_ISSUER_ID")
+  key_b64   = env_any("APP_STORE_CONNECT_API_KEY_BASE64")
+  key_raw   = env_any("APP_STORE_CONNECT_API_KEY", "APPLE_KEY")
+  UI.user_error!("Missing ASC private key. Provide APP_STORE_CONNECT_API_KEY_BASE64 or APP_STORE_CONNECT_API_KEY") if key_b64.empty? && key_raw.empty?
 
-  key_base64 = env_any("APP_STORE_CONNECT_API_KEY_BASE64")
-  key_raw    = env_any("APP_STORE_CONNECT_API_KEY", "APPLE_KEY")
-
-  if key_base64.empty? && key_raw.empty?
-    UI.user_error!("Missing ASC private key. Provide either APP_STORE_CONNECT_API_KEY_BASE64 or APP_STORE_CONNECT_API_KEY / APPLE_KEY.")
-  end
-
-  key_content = !key_base64.empty? ? Base64.decode64(key_base64) : key_raw
-  { key_id: key_id, issuer_id: issuer_id, key_content: key_content }
+  content = key_b64.empty? ? key_raw : Base64.decode64(key_b64)
+  { key_id: key_id, issuer_id: issuer_id, key_content: content }
 end
 
-def resolve_workspace_and_project!
-  # Prefer the CocoaPods workspace if present; otherwise, fall back to the xcodeproj.
-  ws_candidates = Dir.glob(File.join(IOS_DIR, "*.xcworkspace"))
-  ws = ws_candidates.find { |p| File.basename(p).downcase.include?("juno") } || ws_candidates.first
-
-  pr_candidates = Dir.glob(File.join(IOS_DIR, "*.xcodeproj"))
-  pr = pr_candidates.find { |p| File.basename(p).downcase.include?("junonativeapp") } ||
-       pr_candidates.find { |p| File.basename(p).downcase.include?("juno") } ||
-       pr_candidates.first
-
-  UI.user_error!("No .xcodeproj found in ios/. Did you run xcodegen?") if pr.nil?
-  { workspace: ws, project: pr }
-end
-
-def install_profile_from_base64!(profile_base64:, expected_team_id:, expected_bundle_id:)
+def install_profile_from_base64!(b64, team_id, bundle_id)
   profiles_dir = File.expand_path("~/Library/MobileDevice/Provisioning Profiles")
   FileUtils.mkdir_p(profiles_dir)
+  tmpf = File.join(Dir.tmpdir, "profile-#{Time.now.to_i}.mobileprovision")
+  File.binwrite(tmpf, Base64.decode64(b64))
 
-  tmp_profile = File.join(Dir.tmpdir, "profile#{Process.pid}-#{Time.now.to_i}.mobileprovision")
-  File.binwrite(tmp_profile, Base64.decode64(profile_base64))
-
-  decoded_plist = sh("security cms -D -i '#{tmp_profile}'", log: false)
-  plist_path = File.join(Dir.tmpdir, "profile#{Process.pid}-#{Time.now.to_i}.plist")
-  File.write(plist_path, decoded_plist)
-
-  profile_uuid = sh("/usr/libexec/PlistBuddy -c 'Print :UUID' '#{plist_path}'", log: false).strip
-  profile_name = sh("/usr/libexec/PlistBuddy -c 'Print :Name' '#{plist_path}'", log: false).strip
-  team_id      = sh("/usr/libexec/PlistBuddy -c 'Print :TeamIdentifier:0' '#{plist_path}'", log: false).strip
-  ent_app_id   = sh("/usr/libexec/PlistBuddy -c 'Print :Entitlements:application-identifier' '#{plist_path}'", log: false).strip
-
-  UI.user_error!("Provisioning profile TeamID mismatch. Profile=#{team_id}, Expected=#{expected_team_id}") unless team_id == expected_team_id
-
-  unless ent_app_id.start_with?("#{expected_team_id}.")
-    UI.user_error!("Provisioning profile entitlement app-id malformed or wrong team. app-id=#{ent_app_id}, Expected prefix=#{expected_team_id}.")
-  end
-
-  expected_full = "#{expected_team_id}.#{expected_bundle_id}"
-  wildcard_full = "#{expected_team_id}.*"
-  unless ent_app_id == expected_full || ent_app_id == wildcard_full
-    UI.user_error!("Provisioning profile does not match bundle id. Profile app-id=#{ent_app_id}, Expected #{expected_full} (or #{wildcard_full})")
-  end
-
-  installed_profile = File.join(profiles_dir, "#{profile_uuid}.mobileprovision")
-  FileUtils.cp(tmp_profile, installed_profile)
-
-  UI.success("✅ Installed provisioning profile: #{profile_name} (#{profile_uuid})")
-  { uuid: profile_uuid, name: profile_name, team_id: team_id, app_id: ent_app_id }
+  plist = `security cms -D -i "#{tmpf}"`
+  meta  = {
+    uuid: `PlistBuddy -c 'Print :UUID' /dev/stdin <<< "#{plist}"`.strip,
+    name: `PlistBuddy -c 'Print :Name' /dev/stdin <<< "#{plist}"`.strip,
+  }
+  FileUtils.cp(tmpf, File.join(profiles_dir, "#{meta[:uuid]}.mobileprovision"))
+  UI.success("✅ Installed provisioning profile: #{meta[:name]} (#{meta[:uuid]})")
+  meta
 end
 
-def find_apple_distribution_identity!
-  out = sh("security find-identity -v -p codesigning", log: false)
-  line = out.lines.find { |l| l.include?("Apple Distribution:") && l.include?("\"") }
-  UI.user_error!("No 'Apple Distribution' signing identity found in keychain. Did certificate import succeed?") if line.nil?
-
-  m = line.match(/"([^"]+)"/)
-  UI.user_error!("Could not parse codesigning identity name from: #{line}") if m.nil?
-  m[1]
+def find_dist_identity!
+  out = `security find-identity -v -p codesigning`
+  line = out.lines.find { |l| l.include?("Apple Distribution:") && l =~ /"(.+)"/ }
+  UI.user_error!("No Apple Distribution identity found") unless line
+  line.match(/"(.+)"/)[1]
 end
 
-def write_export_options_plist!(path:, team_id:, app_identifier:, profile_name:)
-  xml = <<~PLIST
-  <?xml version="1.0" encoding="UTF-8"?>
-  <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-  <plist version="1.0">
-    <dict>
-      <key>method</key>
-      <string>app-store</string>
-
-      <key>signingStyle</key>
-      <string>manual</string>
-
-      <key>teamID</key>
-      <string>#{team_id}</string>
-
-      <key>provisioningProfiles</key>
-      <dict>
-        <key>#{app_identifier}</key>
-        <string>#{profile_name}</string>
-      </dict>
-
-      <key>compileBitcode</key>
-      <false/>
-
-      <key>uploadBitcode</key>
-      <false/>
-
-      <key>uploadSymbols</key>
-      <true/>
-    </dict>
-  </plist>
-  PLIST
-
-  FileUtils.mkdir_p(File.dirname(path))
-  File.write(path, xml)
-end
-
-def validate_archive_has_app!(archive_path:)
-  apps_dir = File.join(archive_path, "Products", "Applications")
-  UI.user_error!("Archive is missing Products/Applications: #{apps_dir}") unless Dir.exist?(apps_dir)
-
-  apps = Dir.glob(File.join(apps_dir, "*.app"))
-  UI.user_error!("Archive has Products/Applications but no .app inside: #{apps_dir}") if apps.empty?
-
-  UI.success("✅ Archive contains app: #{File.basename(apps.first)}")
-end
-
-def validate_export_has_ipa!(export_dir:)
-  ipas = Dir.glob(File.join(export_dir, "*.ipa"))
-  UI.user_error!("Export completed but no .ipa found in #{export_dir}") if ipas.empty?
-  ipas.first
-end
-
+#######################
+# Main CI Lane
+#######################
 platform :ios do
-  ############################################################
-  # Main CI lane
-  ############################################################
-  desc "CI pipeline: verify ASC, certs, profile; generate xcodeproj; patch; archive+export; upload TestFlight"
+  desc "🚀 Full CI: ASC-only cert/profile import → patch project → build & upload"
   lane :ios_ci do
-    UI.header("🚀 JunoNative iOS CI")
-    opt_out_usage
-
-    verify_appstore_connect_no_sigh
-
-    asc_api_key     = Actions.lane_context[:ASC_API_KEY]
-    profile_name    = Actions.lane_context[:PROFILE_NAME]
-    keychain_path   = Actions.lane_context[:KEYCHAIN_PATH]
-
-    app_identifier  = ensure_any!("App bundle id", "APP_IDENTIFIER")
-    team_id         = ensure_any!("Apple Team ID", "APPLE_TEAM_ID")
-
-    prepare_build_assets
-
-    # CRITICAL: This repo contains a static library xcodeproj (JunoNative.xcodeproj).
-    # The real iOS app project is generated from ios/JunoNativeApp.yml via XcodeGen.
-    generate_ios_project
-
-    install_cocoapods
-
-    # Patch build settings + ensure a shared scheme exists for CI.
-    fix_xcodeproj_settings
-
-    # Fast fail: ensure the project/workspace is wired.
-    compile_swift_sources
-
-    ipa_path = archive_and_export_ipa(
-      team_id: team_id,
-      app_identifier: app_identifier,
-      profile_name: profile_name,
-      keychain_path: keychain_path
-    )
-
-    UI.message("🕊  Uploading to TestFlight")
-    upload_to_testflight(
-      ipa: ipa_path,
-      api_key: asc_api_key,
-      skip_waiting_for_build_processing: true,
-      distribute_external: false
-    )
-
-    UI.success("🎉 TestFlight upload finished")
-  end
-
-  ############################################################
-  # Verify ASC + cert + profile (NO sigh)
-  ############################################################
-  desc "Verify ASC API key, import distribution cert, install provisioning profile (from secret) — no sigh"
-  private_lane :verify_appstore_connect_no_sigh do
-    UI.header("🔍 Verifying ASC credentials, certificate & profile (no sigh)")
-
-    team_id        = ensure_any!("Apple Team ID", "APPLE_TEAM_ID")
-    app_identifier = ensure_any!("App bundle id", "APP_IDENTIFIER")
-
-    asc_cfg = resolve_asc_config
-
-    cert_b64 = ensure_any!("iOS distribution p12 base64", "IOS_DIST_CERT_BASE64", "IOS_CERT_P12_BASE64")
-    cert_pw  = ensure_any!("iOS distribution p12 password", "IOS_DIST_CERT_PASSWORD", "IOS_CERT_PASSWORD")
-    prof_b64 = ensure_any!("iOS provisioning profile base64", "IOS_PROFILE_BASE64", "IOS_PROVISIONING_PROFILE_BASE64")
-
+    UI.header("🔍 1. ASC auth + cert/profile import")
+    asc = resolve_asc_config
     api_key = app_store_connect_api_key(
-      key_id: asc_cfg[:key_id],
-      issuer_id: asc_cfg[:issuer_id],
-      key_content: asc_cfg[:key_content],
+      key_id:     asc[:key_id],
+      issuer_id:  asc[:issuer_id],
+      key_content: asc[:key_content],
       set_spaceship_token: true
     )
     Actions.lane_context[:ASC_API_KEY] = api_key
 
-    apps = Spaceship::ConnectAPI::App.all(filter: { bundleId: app_identifier })
-    app = apps.first
-    UI.user_error!("App with identifier #{app_identifier} not found in this ASC account") if app.nil?
-    UI.success("✅ Authenticated — Found app #{app.name} (#{app.bundle_id})")
+    team_id    = ensure_any!("team id",        "APPLE_TEAM_ID")
+    bundle_id  = ensure_any!("bundle id",      "APP_IDENTIFIER")
+    p12_b64    = ensure_any!("p12 base64",     "IOS_DIST_CERT_BASE64", "IOS_CERT_P12_BASE64")
+    p12_pw     = ensure_any!("p12 password",   "IOS_DIST_CERT_PASSWORD", "IOS_CERT_PASSWORD")
+    prof_b64   = ensure_any!("profile base64", "IOS_PROFILE_BASE64", "IOS_PROVISIONING_PROFILE_BASE64")
 
-    UI.header("🔐 Verifying distribution certificate (.p12)")
-
-    tmp_p12 = File.join(Dir.tmpdir, "dist#{Process.pid}-#{Time.now.to_i}.p12")
-    File.binwrite(tmp_p12, Base64.decode64(cert_b64))
-    sh("openssl pkcs12 -in '#{tmp_p12}' -nokeys -passin pass:#{Shellwords.escape(cert_pw)} -info >/dev/null 2>&1")
-    UI.success("✅ p12 structure and password are valid")
-
-    keychain_name     = "ios-build.keychain-db"
-    keychain_password = env_any("KEYCHAIN_PASSWORD", "MATCH_KEYCHAIN_PASSWORD")
-    keychain_password = "fastlane_ci_temp" if keychain_password.to_s.empty?
-
-    # Be aggressive: if something left a keychain behind on a rerun, remove it.
-    delete_keychain(name: keychain_name) rescue nil
+    # import cert
+    tmp_p12 = File.join(Dir.tmpdir, "dist-#{Time.now.to_i}.p12")
+    File.binwrite(tmp_p12, Base64.decode64(p12_b64))
+    sh("openssl pkcs12 -in #{Shellwords.escape(tmp_p12)} -nokeys -passin pass:#{Shellwords.escape(p12_pw)} >/dev/null")
 
     create_keychain(
-      name: keychain_name,
-      password: keychain_password,
-      default_keychain: true,
-      unlock: true,
-      timeout: 3600,
-      lock_when_sleeps: false
+      name: ENV["KEYCHAIN_NAME"] || "ios-build.keychain-db",
+      password: ENV["KEYCHAIN_PASSWORD"] || "fastlane_ci",
+      default_keychain: true, unlock: true, timeout: 3600
     )
-
-    keychain_path = File.expand_path("~/Library/Keychains/#{keychain_name}")
-    Actions.lane_context[:KEYCHAIN_PATH] = keychain_path
-
     import_certificate(
       certificate_path: tmp_p12,
-      certificate_password: cert_pw,
-      keychain_name: keychain_name
+      certificate_password: p12_pw,
+      keychain_name: ENV["KEYCHAIN_NAME"] || "ios-build.keychain-db"
     )
+    sh("security set-key-partition-list -S apple-tool:,apple: -s -k #{Shellwords.escape(ENV['KEYCHAIN_PASSWORD']||'fastlane_ci')} ~/Library/Keychains/ios-build.keychain-db")
 
-    sh("security set-key-partition-list -S apple-tool:,apple: -s -k #{Shellwords.escape(keychain_password)} #{Shellwords.escape(keychain_path)}")
+    # import profile
+    meta = install_profile_from_base64!(prof_b64, team_id, bundle_id)
+    Actions.lane_context[:PROFILE_NAME] = meta[:name]
 
-    UI.header("🧾 Installing provisioning profile from secret")
-    profile_meta = install_profile_from_base64!(
-      profile_base64: prof_b64,
-      expected_team_id: team_id,
-      expected_bundle_id: app_identifier
-    )
+    UI.header("🧰 2. Patch Xcode project & scheme")
+    fix_xcodeproj_settings
+    ensure_shared_scheme
 
-    Actions.lane_context[:PROFILE_UUID] = profile_meta[:uuid]
-    Actions.lane_context[:PROFILE_NAME] = profile_meta[:name]
-
-    UI.success("🎉 Verification completed (ASC + cert + profile).")
-  end
-
-  ############################################################
-  # Generate iOS app project via XcodeGen
-  ############################################################
-  private_lane :generate_ios_project do
-    UI.header("🧱 Generating iOS app project via XcodeGen (ios/JunoNativeApp.yml)")
-
-    spec_path = File.join(IOS_DIR, "JunoNativeApp.yml")
-    UI.user_error!("Missing XcodeGen spec at #{spec_path}") unless File.exist?(spec_path)
-
-    sh("bundle exec ruby #{File.join(ROOT_DIR, 'scripts', 'ci', 'generate_ios_project.rb')}")
-    UI.success("✅ iOS app project generated")
-  end
-
-  ############################################################
-  # Patch Xcode project + ensure scheme
-  ############################################################
-  private_lane :fix_xcodeproj_settings do
-    UI.header("🧰 Patching Xcode project and ensuring a shared scheme for CI")
-
-    paths = resolve_workspace_and_project!
-    ENV["XCODEPROJ_PATH"] = paths[:project]
-
-    sh("bundle exec ruby #{File.join(ROOT_DIR, 'scripts', 'ci', 'fix_xcodeproj.rb')}")
-    sh("bundle exec ruby #{File.join(ROOT_DIR, 'scripts', 'ci', 'ensure_shared_scheme.rb')}")
-
-    UI.success("✅ Xcode project patched + shared scheme ensured")
-  end
-
-  ############################################################
-  # Build DSP core (CMake)
-  ############################################################
-  private_lane :compile_dsp_engine do
-    UI.header("🎛  Compiling DSP engine via CMake")
-
-    build_dir = File.join(ROOT_DIR, "fastlane", "build", "cmake")
-    sh("cmake -S #{ROOT_DIR} -B #{build_dir} -DCMAKE_BUILD_TYPE=Release")
-    sh("cmake --build #{build_dir} --config Release")
-
-    UI.success("✅ DSP engine + tests compiled")
-  end
-
-  ############################################################
-  # TurboModules codegen stub
-  ############################################################
-  private_lane :compile_turbo_modules do
-    UI.header("⚙️  TurboModules / Fabric codegen stub")
-    codegen_build_dir = File.join(ROOT_DIR, "fastlane", "build", "codegen")
-    FileUtils.mkdir_p(codegen_build_dir)
-    UI.success("✅ TurboModules stub completed")
-  end
-
-  private_lane :prepare_build_assets do
-    UI.header("🧱 Preparing build assets (DSP engine + TurboModules)")
-    compile_dsp_engine
-    compile_turbo_modules
-  end
-
-  ############################################################
-  # CocoaPods install (with New Arch enabled for codegen)
-  ############################################################
-  private_lane :install_cocoapods do
-    UI.header("📦 Installing CocoaPods dependencies (New Arch enabled)")
-    Dir.chdir(IOS_DIR) do
-      sh("RCT_NEW_ARCH_ENABLED=1 bundle exec pod install --repo-update")
-    end
-    UI.success("✅ Pods installed")
-  end
-
-  ############################################################
-  # Preflight build (no signing)
-  ############################################################
-  private_lane :compile_swift_sources do
-    UI.header("🧪 Preflight Swift / RN build (no signing)")
-
-    paths = resolve_workspace_and_project!
-    ws = paths[:workspace]
-    pr = paths[:project]
-
-    xcpretty = system("which xcpretty >/dev/null 2>&1")
-    pretty   = xcpretty ? " | xcpretty --no-color" : ""
-
-    common_flags = 'CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" RCT_NEW_ARCH_ENABLED=1'
-
-    cmd =
-      if ws && File.exist?(ws)
-        %Q[xcodebuild -workspace "#{ws}" -scheme JunoNative -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' #{common_flags}]
-      elsif pr && File.exist?(pr)
-        %Q[xcodebuild -project "#{pr}" -scheme JunoNative -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' #{common_flags}]
-      else
-        UI.user_error!("No Xcode workspace or project found under ios/.")
-      end
-
-    sh("set -o pipefail && #{cmd}#{pretty}")
-    UI.success("✅ Preflight build succeeded (no signing)")
-  end
-
-  ############################################################
-  # Archive + Export IPA (manual signing)
-  ############################################################
-  private_lane :archive_and_export_ipa do |options|
-    UI.header("📦 Archiving + exporting IPA")
-
-    team_id        = options.fetch(:team_id)
-    app_identifier = options.fetch(:app_identifier)
-    profile_name   = options.fetch(:profile_name)
-    keychain_path  = options.fetch(:keychain_path)
-
-    paths = resolve_workspace_and_project!
-    ws = paths[:workspace]
-    pr = paths[:project]
-
-    codesign_identity = find_apple_distribution_identity!
-    UI.message("🔏 Using codesigning identity: #{codesign_identity}")
-
-    build_dir    = File.join(ROOT_DIR, "fastlane", "build", "ios")
-    archive_path = File.join(build_dir, "JunoNative.xcarchive")
-    export_dir   = File.join(build_dir, "export")
-    export_plist = File.join(build_dir, "exportOptions.plist")
-
-    FileUtils.rm_rf(archive_path) if Dir.exist?(archive_path)
-    FileUtils.rm_rf(export_dir) if Dir.exist?(export_dir)
-    FileUtils.mkdir_p(build_dir)
-
-    write_export_options_plist!(
-      path: export_plist,
-      team_id: team_id,
-      app_identifier: app_identifier,
-      profile_name: profile_name
-    )
-
-    # Important: force xcodebuild to use the imported certificate in our custom keychain.
-    other_codesign_flags = "--keychain #{Shellwords.escape(keychain_path)}"
-
-    signing_xcargs = [
+    UI.header("📦 3. Build Archive + Export IPA")
+    codesign_id = find_dist_identity!
+    signing_args = [
       "DEVELOPMENT_TEAM=#{team_id}",
       "CODE_SIGN_STYLE=Manual",
-      "CODE_SIGN_IDENTITY=#{Shellwords.escape(codesign_identity)}",
-      "PROVISIONING_PROFILE_SPECIFIER=#{Shellwords.escape(profile_name)}",
-      "OTHER_CODE_SIGN_FLAGS=#{Shellwords.escape(other_codesign_flags)}",
-      "RCT_NEW_ARCH_ENABLED=1"
+      "CODE_SIGN_IDENTITY=#{Shellwords.escape(codesign_id)}",
+      "PROVISIONING_PROFILE_SPECIFIER=#{Shellwords.escape(meta[:name])}"
     ].join(" ")
 
-    archive_cmd =
-      if ws && File.exist?(ws)
-        %Q[xcodebuild -workspace "#{ws}" -scheme JunoNative -configuration Release -sdk iphoneos -archivePath "#{archive_path}" archive #{signing_xcargs}]
-      else
-        %Q[xcodebuild -project "#{pr}" -scheme JunoNative -configuration Release -sdk iphoneos -archivePath "#{archive_path}" archive #{signing_xcargs}]
-      end
+    ipa = build_app(
+      workspace:      "ios/JunoNative.xcworkspace",
+      scheme:         "JunoNative",
+      clean:          true,
+      export_method:  "app-store",
+      skip_profile_detection: true,
+      export_team_id: team_id,
+      export_options: {
+        signingStyle: "manual",
+        teamID:       team_id,
+        provisioningProfiles: { bundle_id => meta[:name] }
+      },
+      output_directory: "fastlane/build/ios",
+      output_name:      "JunoNative.ipa",
+      xcargs:           signing_args
+    )
+    UI.success("✅ IPA built at: #{ipa}")
 
-    sh("set -o pipefail && #{archive_cmd}")
+    UI.header("🕊 4. Upload to TestFlight")
+    upload_to_testflight(
+      ipa: ipa,
+      api_key: api_key,
+      skip_waiting_for_build_processing: true,
+      distribute_external: false
+    )
+    UI.success("🎉 Done!")
+  end
 
-    validate_archive_has_app!(archive_path: archive_path)
+  ########################
+  # Support Lanes
+  ########################
+  private_lane :fix_xcodeproj_settings do
+    UI.header("Patching XcodeProj to generate a real .app archive")
+    sh("bundle exec ruby scripts/ci/fix_xcodeproj.rb")
+  end
 
-    export_cmd = %Q[xcodebuild -exportArchive -archivePath "#{archive_path}" -exportPath "#{export_dir}" -exportOptionsPlist "#{export_plist}"]
-    sh("set -o pipefail && #{export_cmd}")
-
-    ipa_path = validate_export_has_ipa!(export_dir: export_dir)
-    UI.success("✅ IPA exported at #{ipa_path}")
-    ipa_path
+  private_lane :ensure_shared_scheme do
+    UI.header("Ensuring JunoNative scheme is shared & builds the app target")
+    sh("bundle exec ruby scripts/ci/ensure_shared_scheme.rb ios/JunoNative.xcodeproj JunoNative")
   end
 end
