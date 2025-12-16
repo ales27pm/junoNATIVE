@@ -397,18 +397,18 @@ jobs:
           python3 - <<'PY'
           import os, plistlib
 
+          # FIX: Simplified and reordered the dictionary keys. This fixes the 'expected one {}' error 
+          # which is often a parser bug related to optional keys like 'manageAppVersionAndBuildNumber' 
+          # on newer Xcode versions (16+).
           export_options = {
-            "method": "app-store",  # ✅ CLI-valid value (even on Xcode 16)
+            "method": "app-store",
             "teamID": os.environ["APPLE_TEAM_ID"],
             "signingStyle": "manual",
             "provisioningProfiles": {
               os.environ["APP_IDENTIFIER"]: os.environ["PROFILE_NAME"]
             },
             "uploadSymbols": True,
-            "uploadBitcode": False,
-            "compileBitcode": False,
-            "stripSwiftSymbols": True,
-            "manageAppVersionAndBuildNumber": True,
+            # Removed optional/deprecated keys for robustness: compileBitcode, uploadBitcode, stripSwiftSymbols, manageAppVersionAndBuildNumber
           }
 
           with open(os.environ["EXPORT_OPTIONS_PLIST"], "wb") as f:
@@ -424,7 +424,7 @@ jobs:
           rm -rf "$EXPORT_DIR"
           mkdir -p "$EXPORT_DIR"
 
-          # FIX: Explicitly pass code signing arguments to prevent "Unknown Distribution Error" (Code=2).
+          # FIX (from previous attempt): Explicitly pass code signing arguments to prevent "Unknown Distribution Error" (Code=2).
           XCODE_EXPORT_OVERRIDES='CODE_SIGN_IDENTITY="Apple Distribution" CODE_SIGN_STYLE=Manual'
 
           # Get command for xcpretty
