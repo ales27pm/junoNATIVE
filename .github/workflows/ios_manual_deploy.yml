@@ -14,32 +14,39 @@ jobs:
     timeout-minutes: 60
 
     env:
+      # --- Required secrets (GitHub repo secrets) ---
       APPLE_ID: ${{ secrets.APPLE_ID }}
       APP_IDENTIFIER: ${{ secrets.APP_IDENTIFIER }}
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
+      # App Store Connect API key (.p8) as BASE64 (single-line)
       APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
       APP_STORE_CONNECT_API_KEY_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ISSUER_ID }}
       APP_STORE_CONNECT_API_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_API_KEY_BASE64 }}
 
+      # Distribution cert (.p12) as BASE64 (single-line) and password
       IOS_DIST_CERT_BASE64: ${{ secrets.IOS_DIST_CERT_BASE64 }}
       IOS_DIST_CERT_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
 
-      # Provisioning profile (.mobileprovision) as BASE64
+      # Provisioning profile (.mobileprovision) as BASE64 (single-line)
       IOS_PROFILE_BASE64: ${{ secrets.IOS_PROFILE_BASE64 }}
 
+      # Keychain password (can be empty but better set)
       KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
 
+      # --- Build config ---
       XCODE_WORKSPACE: ios/JunoNative.xcworkspace
       XCODE_SCHEME: JunoNative
       CONFIGURATION: Release
 
+      # Node
       NODE_VERSION: "22"
 
     steps:
       - name: 🧾 Checkout code
         uses: actions/checkout@v4
 
+      # Avoid ${{ runner.temp }} (it is NOT valid everywhere); use $RUNNER_TEMP instead.
       - name: Compute build paths
         shell: bash
         run: |
@@ -66,11 +73,14 @@ jobs:
           else
             echo "manager=yarn" >> "$GITHUB_OUTPUT"
           fi
+          echo "Detected JS package manager: ${{ steps.pm.outputs.manager }}"
 
       - name: 🟩 Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
+          # IMPORTANT: don't enable cache unless a lockfile is guaranteed present.
+          # setup-node hard-fails if it can't find yarn.lock / package-lock.json / pnpm-lock.yaml.
 
       - name: 📦 Install JS deps (lockfile-aware)
         shell: bash
@@ -80,15 +90,37 @@ jobs:
 
           case "${{ steps.pm.outputs.manager }}" in
             yarn)
+              echo "Using Yarn..."
               yarn --version
-              if [ -f "yarn.lock" ]; then yarn install --frozen-lockfile; else yarn install; fi
+              if [ -f "yarn.lock" ]; then
+                yarn install --frozen-lockfile
+              else
+                echo "⚠️ No yarn.lock found; running non-frozen install (commit yarn.lock for deterministic builds)."
+                yarn install
+              fi
               ;;
             npm)
-              npm ci
+              echo "Using npm..."
+              node --version
+              npm --version
+              if [ -f "package-lock.json" ]; then
+                npm ci
+              else
+                npm install
+              fi
               ;;
             pnpm)
+              echo "Using pnpm..."
               pnpm --version || corepack prepare pnpm@latest --activate
-              pnpm install --frozen-lockfile
+              if [ -f "pnpm-lock.yaml" ]; then
+                pnpm install --frozen-lockfile
+              else
+                pnpm install
+              fi
+              ;;
+            *)
+              echo "Unknown package manager selection."
+              exit 1
               ;;
           esac
 
@@ -136,6 +168,7 @@ jobs:
             pod install --repo-update
           fi
 
+      # Create/unlock keychain (no partition list yet — that fails before the private key exists)
       - name: 🔐 Create temporary keychain
         shell: bash
         run: |
@@ -147,18 +180,31 @@ jobs:
           security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 
+          # Keep login keychain available too (avoids weird lookups)
           security list-keychains -d user -s "$KEYCHAIN_PATH" "$HOME/Library/Keychains/login.keychain-db"
           security default-keychain -s "$KEYCHAIN_PATH"
 
           echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
           echo "KEYCHAIN_PASSWORD=$KEYCHAIN_PASSWORD" >> "$GITHUB_ENV"
 
-      - name: 🪪 Decode and import signing certificate (p12) + enable codesign access
+      # Import cert first, THEN partition list (otherwise: SecItemCopyMatching not found)
+      - name: 🪪 Import signing certificate (p12) + enable codesign access
         shell: bash
         run: |
           set -euo pipefail
+
+          if [ -z "${IOS_DIST_CERT_BASE64:-}" ]; then
+            echo "IOS_DIST_CERT_BASE64 is empty. Set it in GitHub Secrets."
+            exit 1
+          fi
+          if [ -z "${IOS_DIST_CERT_PASSWORD:-}" ]; then
+            echo "IOS_DIST_CERT_PASSWORD is empty. Set it in GitHub Secrets."
+            exit 1
+          fi
+
           CERT_P12="$RUNNER_TEMP/ios_dist.p12"
-          echo "$IOS_DIST_CERT_BASE64" | base64 --decode > "$CERT_P12"
+          python3 -c "import base64,os; open('${CERT_P12}','wb').write(base64.b64decode(os.environ['IOS_DIST_CERT_BASE64'].strip()))"
+          python3 -c "import os; print('p12 bytes:', os.path.getsize('${CERT_P12}'))"
 
           security import "$CERT_P12" \
             -k "$KEYCHAIN_PATH" \
@@ -169,10 +215,17 @@ jobs:
             -T /usr/bin/productbuild
 
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          echo "Available signing identities:"
           security find-identity -v -p codesigning "$KEYCHAIN_PATH"
 
-      # ✅ REPLACED: strict decode + sanity check + extract UUID via a plist file
-      - name: 📄 Decode provisioning profile (App Store) [strict]
+          # Fail if none are found (prevents mysterious signing failures later)
+          if ! security find-identity -v -p codesigning "$KEYCHAIN_PATH" | grep -qE "\) "; then
+            echo "No codesigning identity found in keychain after import."
+            exit 1
+          fi
+
+      - name: 📄 Decode provisioning profile (IOS_PROFILE_BASE64)
         shell: bash
         run: |
           set -euo pipefail
@@ -186,48 +239,42 @@ jobs:
           mkdir -p "$PP_DIR"
 
           PP_FILE="$RUNNER_TEMP/profile.mobileprovision"
-          PLIST_FILE="$PROFILE_PLIST"
+          python3 -c "import base64,os; open('${PP_FILE}','wb').write(base64.b64decode(os.environ['IOS_PROFILE_BASE64'].strip()))"
+          python3 -c "import os; print('profile bytes:', os.path.getsize('${PP_FILE}'))"
 
-          export PP_FILE PLIST_FILE
+          # Convert .mobileprovision -> plist (will fail loudly if the decoded file isn't a real profile)
+          /usr/bin/security cms -D -i "$PP_FILE" > "$PROFILE_PLIST"
 
-          python3 - <<'PY'
-import os, re, base64, sys
-b64 = os.environ.get("IOS_PROFILE_BASE64", "")
-b64 = re.sub(r"\s+", "", b64)  # remove newlines/spaces from copy/paste
-try:
-    data = base64.b64decode(b64, validate=True)
-except Exception as e:
-    print("❌ IOS_PROFILE_BASE64 is not valid base64:", e)
-    sys.exit(1)
-if len(data) < 32:
-    print(f"❌ Decoded provisioning profile is too small ({len(data)} bytes). Wrong secret value.")
-    sys.exit(1)
-with open(os.environ["PP_FILE"], "wb") as f:
-    f.write(data)
-print("✅ Provisioning profile decoded bytes:", len(data))
-PY
+          UUID=$(/usr/libexec/PlistBuddy -c 'Print:UUID' "$PROFILE_PLIST")
+          NAME=$(/usr/libexec/PlistBuddy -c 'Print:Name' "$PROFILE_PLIST")
 
-          echo "Decoded profile file size:"
-          stat -f "%z bytes" "$PP_FILE" || wc -c "$PP_FILE"
-
-          # Convert CMS -> plist (this is where you were dying)
-          /usr/bin/security cms -D -i "$PP_FILE" > "$PLIST_FILE"
-
-          UUID=$(/usr/libexec/PlistBuddy -c 'Print:UUID' "$PLIST_FILE")
           cp "$PP_FILE" "$PP_DIR/$UUID.mobileprovision"
 
           echo "PROFILE_UUID=$UUID" >> "$GITHUB_ENV"
-          echo "PROFILE_UUID=$UUID"
+          echo "PROFILE_NAME=$NAME" >> "$GITHUB_ENV"
+          echo "Imported provisioning profile: $NAME ($UUID)"
 
       - name: 🔑 Decode App Store Connect API key (p8)
         shell: bash
         run: |
           set -euo pipefail
+
+          if [ -z "${APP_STORE_CONNECT_API_KEY_BASE64:-}" ]; then
+            echo "APP_STORE_CONNECT_API_KEY_BASE64 is empty. Set it in GitHub Secrets."
+            exit 1
+          fi
+          if [ -z "${APP_STORE_CONNECT_API_KEY_ID:-}" ] || [ -z "${APP_STORE_CONNECT_API_KEY_ISSUER_ID:-}" ]; then
+            echo "APP_STORE_CONNECT_API_KEY_ID / APP_STORE_CONNECT_API_KEY_ISSUER_ID missing."
+            exit 1
+          fi
+
           mkdir -p "$ASC_DIR"
-          API_KEY_PATH="$ASC_DIR/AuthKey_${APP_STORE_CONNECT_API_KEY_ID}.p8"
-          echo "$APP_STORE_CONNECT_API_KEY_BASE64" | base64 --decode > "$API_KEY_PATH"
-          chmod 600 "$API_KEY_PATH"
-          echo "ASC_API_KEY_PATH=$API_KEY_PATH" >> "$GITHUB_ENV"
+          ASC_P8_PATH="$ASC_DIR/AuthKey_${APP_STORE_CONNECT_API_KEY_ID}.p8"
+
+          python3 -c "import base64,os; open('${ASC_P8_PATH}','wb').write(base64.b64decode(os.environ['APP_STORE_CONNECT_API_KEY_BASE64'].strip()))"
+          chmod 600 "$ASC_P8_PATH"
+
+          echo "ASC_API_KEY_PATH=$ASC_P8_PATH" >> "$GITHUB_ENV"
 
       - name: 🏗️ Build archive (xcodebuild archive)
         shell: bash
@@ -243,7 +290,6 @@ PY
             -archivePath "$ARCHIVE_PATH" \
             -destination "generic/platform=iOS" \
             DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
-            PRODUCT_BUNDLE_IDENTIFIER="$APP_IDENTIFIER" \
             archive | xcpretty
 
           test -d "$ARCHIVE_PATH"
@@ -252,32 +298,30 @@ PY
         shell: bash
         run: |
           set -euo pipefail
-          cat > "$EXPORT_OPTIONS_PLIST" << PLIST
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-            <key>method</key>
-            <string>app-store</string>
-            <key>destination</key>
-            <string>export</string>
-            <key>signingStyle</key>
-            <string>manual</string>
-            <key>stripSwiftSymbols</key>
-            <true/>
-            <key>compileBitcode</key>
-            <false/>
-            <key>teamID</key>
-            <string>${APPLE_TEAM_ID}</string>
-            <key>provisioningProfiles</key>
-            <dict>
-              <key>${APP_IDENTIFIER}</key>
-              <string>${PROFILE_UUID}</string>
-            </dict>
-          </dict>
-          </plist>
-          PLIST
-          plutil -lint "$EXPORT_OPTIONS_PLIST"
+          python3 - <<'PY'
+          import os, plistlib
+
+          bundle_id = os.environ["APP_IDENTIFIER"]
+          team_id = os.environ["APPLE_TEAM_ID"]
+          profile_name = os.environ["PROFILE_NAME"]
+
+          data = {
+            "method": "app-store",
+            "destination": "export",
+            "signingStyle": "manual",
+            "stripSwiftSymbols": True,
+            "compileBitcode": False,
+            "teamID": team_id,
+            "provisioningProfiles": {
+              bundle_id: profile_name
+            }
+          }
+
+          with open(os.environ["EXPORT_OPTIONS_PLIST"], "wb") as f:
+            plistlib.dump(data, f)
+          PY
+
+          /usr/bin/plutil -lint "$EXPORT_OPTIONS_PLIST"
 
       - name: 📤 Export IPA (xcodebuild -exportArchive)
         shell: bash
@@ -301,16 +345,24 @@ PY
           RELEASE_NOTES: ${{ inputs.release_notes }}
         run: |
           set -euo pipefail
+
           IPA_PATH=$(find "$EXPORT_DIR" -maxdepth 1 -name "*.ipa" | head -n 1)
 
-          cat > "$ASC_API_KEY_JSON" << JSON
-          {
-            "key_id": "${APP_STORE_CONNECT_API_KEY_ID}",
-            "issuer_id": "${APP_STORE_CONNECT_API_KEY_ISSUER_ID}",
-            "key": "$(cat "$ASC_API_KEY_PATH" | sed ':a;N;$!ba;s/\n/\\n/g')",
-            "in_house": false
+          python3 - <<'PY'
+          import os, json
+          with open(os.environ["ASC_API_KEY_PATH"], "r", encoding="utf-8") as f:
+            key = f.read()
+
+          payload = {
+            "key_id": os.environ["APP_STORE_CONNECT_API_KEY_ID"],
+            "issuer_id": os.environ["APP_STORE_CONNECT_API_KEY_ISSUER_ID"],
+            "key": key,
+            "in_house": False
           }
-          JSON
+
+          with open(os.environ["ASC_API_KEY_JSON"], "w", encoding="utf-8") as f:
+            json.dump(payload, f)
+          PY
 
           if [ "${{ steps.ruby.outputs.use_bundler }}" = "true" ]; then
             bundle exec fastlane pilot upload \
@@ -333,10 +385,10 @@ PY
           name: ios-build-artifacts
           path: |
             ${{ env.EXPORT_OPTIONS_PLIST }}
+            ${{ env.PROFILE_PLIST }}
             ${{ env.ARCHIVE_INFO_PLIST }}
             ${{ env.ARCHIVE_PATH }}
             ${{ env.EXPORT_DIR }}
-            ${{ env.PROFILE_PLIST }}
 
       - name: 🧹 Cleanup keychain
         if: always()
