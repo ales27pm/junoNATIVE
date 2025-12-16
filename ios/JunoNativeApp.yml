@@ -1,0 +1,25 @@
+name: JunoNativeApp
+
+options:
+  deploymentTarget:
+    iOS: "14.0"
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    DEVELOPMENT_TEAM: ""
+    PRODUCT_BUNDLE_IDENTIFIER: "org.example.JunoNative"
+
+targets:
+  JunoNative:
+    type: application
+    platform: iOS
+    sources:
+      - path: JunoNativeApp
+      - path: ../src
+    settings:
+      base:
+        INFOPLIST_FILE: JunoNativeApp/Info.plist
+        PRODUCT_NAME: JunoNative
+        CURRENT_PROJECT_VERSION: 1
+        MARKETING_VERSION: 1.0.0
