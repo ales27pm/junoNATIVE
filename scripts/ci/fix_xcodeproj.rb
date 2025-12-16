@@ -1,57 +1,89 @@
-#!/usr/bin/env ruby
 # scripts/ci/fix_xcodeproj.rb
-#
-# Fixes the #1 cause of "generic archive" in CI:
-# - ensures iOS application targets have SKIP_INSTALL=NO for all configs
-#
-# This runs on GitHub Actions (macOS runner) via `bundle exec ruby scripts/ci/fix_xcodeproj.rb`.
+# Patches the iOS project so Archive includes a real .app (not a generic archive).
 
-require "pathname"
+require "xcodeproj"
+require "fileutils"
 
-ROOT = Pathname.new(__dir__).join("..", "..").cleanpath
-XCODEPROJ = ROOT.join("ios", "JunoNative.xcodeproj")
-PBXPROJ = XCODEPROJ.join("project.pbxproj")
+root = File.expand_path("../..", __dir__)
+proj_path = File.join(root, "ios", "JunoNative.xcodeproj")
+pbxproj = File.join(proj_path, "project.pbxproj")
 
-abort("❌ Missing Xcode project: #{XCODEPROJ}") unless XCODEPROJ.exist?
-abort("❌ Missing pbxproj: #{PBXPROJ}") unless PBXPROJ.exist?
-
-begin
-  require "xcodeproj"
-rescue LoadError => e
-  warn "❌ Missing gem 'xcodeproj'. It should be present if you're using CocoaPods via Bundler."
-  warn "   Error: #{e.class}: #{e.message}"
-  warn "   Fix: ensure Gemfile includes `gem 'cocoapods'` (it pulls in xcodeproj), then run `bundle install`."
+unless File.exist?(pbxproj)
+  warn "❌ Missing #{pbxproj}"
   exit 1
 end
 
-project = Xcodeproj::Project.open(XCODEPROJ.to_s)
+bundle_id = ENV["APP_IDENTIFIER"].to_s
+target_name = ENV["IOS_APP_TARGET"].to_s
+target_name = "JunoNative" if target_name.empty?
 
-app_targets = project.targets.select do |t|
-  t.respond_to?(:product_type) && t.product_type == "com.apple.product-type.application"
-end
+project = Xcodeproj::Project.open(proj_path)
 
-if app_targets.empty?
-  warn "❌ No iOS application targets found in #{XCODEPROJ}."
-  warn "   Targets seen: #{project.targets.map(&:name).join(', ')}"
+targets = project.targets
+if targets.empty?
+  warn "❌ No targets found in #{proj_path}"
   exit 1
 end
 
-changed = false
+puts "🔎 Targets seen: #{targets.map(&:name).join(', ')}"
 
-app_targets.each do |t|
-  t.build_configurations.each do |cfg|
-    current = cfg.build_settings["SKIP_INSTALL"]
-    if current != "NO"
-      cfg.build_settings["SKIP_INSTALL"] = "NO"
-      changed = true
-      puts "✅ Set SKIP_INSTALL=NO for target=#{t.name} config=#{cfg.name} (was #{current.inspect})"
+# Pick a target:
+# 1) exact name match
+# 2) bundle id match in build settings
+candidates = targets.select { |t| t.name == target_name }
+
+if candidates.empty? && !bundle_id.empty?
+  candidates = targets.select do |t|
+    t.build_configurations.any? do |cfg|
+      cfg.build_settings["PRODUCT_BUNDLE_IDENTIFIER"].to_s == bundle_id
     end
   end
 end
 
-if changed
-  project.save
-  puts "💾 Saved project changes to #{PBXPROJ}"
-else
-  puts "✅ No changes needed (SKIP_INSTALL already NO on app targets)."
+# Fall back: any PBXNativeTarget named like the app
+if candidates.empty?
+  candidates = targets.select { |t| t.is_a?(Xcodeproj::Project::Object::PBXNativeTarget) && t.name.downcase.include?("juno") }
 end
+
+if candidates.empty?
+  warn "❌ No candidate targets found to patch in #{proj_path}."
+  warn "   If this project truly has no iOS app target, you must regenerate the iOS project (it will always archive as generic)."
+  exit 1
+end
+
+candidates.each do |t|
+  puts "🛠  Patching target: #{t.name} (#{t.class})"
+
+  # Some repos accidentally end up with a non-application product type.
+  # If it smells like an app (has Info.plist + bundle id), force product_type.
+  begin
+    has_plist = t.build_configurations.any? { |cfg| cfg.build_settings["INFOPLIST_FILE"].to_s != "" }
+    has_bundle = t.build_configurations.any? { |cfg| cfg.build_settings["PRODUCT_BUNDLE_IDENTIFIER"].to_s != "" }
+
+    if t.respond_to?(:product_type) && (t.product_type.to_s.empty? || (!t.product_type.to_s.include?("application") && has_plist && has_bundle))
+      puts "  • Setting product_type => com.apple.product-type.application (was: #{t.product_type})"
+      t.product_type = "com.apple.product-type.application"
+    end
+  rescue => e
+    warn "  ⚠️ Could not adjust product_type for #{t.name}: #{e}"
+  end
+
+  t.build_configurations.each do |cfg|
+    name = cfg.name.to_s
+    bs = cfg.build_settings
+
+    # IMPORTANT: apps must be SKIP_INSTALL=NO for Archive, otherwise Products/Applications is missing.
+    if name.downcase.include?("release") || name.downcase.include?("archive")
+      puts "  • #{name}: SKIP_INSTALL => NO"
+      bs["SKIP_INSTALL"] = "NO"
+      bs["INSTALL_PATH"] = "/Applications"
+    end
+
+    # Helps CI consistency
+    bs["ONLY_ACTIVE_ARCH"] = "NO" if bs["ONLY_ACTIVE_ARCH"].to_s.empty?
+    bs["DEAD_CODE_STRIPPING"] = "YES" if bs["DEAD_CODE_STRIPPING"].to_s.empty?
+  end
+end
+
+project.save
+puts "✅ Saved patched project: #{proj_path}"
