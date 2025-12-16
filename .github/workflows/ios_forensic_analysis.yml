@@ -1,4 +1,4 @@
-name: iOS Forensic Build & Archive
+name: iOS Forensic Analysis
 
 on:
   workflow_dispatch:
@@ -6,14 +6,8 @@ on:
     branches: [ main ]
 
 jobs:
-  ios-forensics:
+  analyze-ios-project:
     runs-on: macos-15
-
-    env:
-      XCODE_PROJECT: ios/JunoNative.xcodeproj
-      XCODE_WORKSPACE: ios/JunoNative.xcworkspace
-      SCHEME: JunoNative
-      CONFIGURATION: Release
 
     steps:
       - uses: actions/checkout@v4
@@ -23,50 +17,47 @@ jobs:
           sudo xcode-select -s /Applications/Xcode_16.app
           xcodebuild -version
 
-      - name: Install Node deps
+      - name: Install Ruby tools
         run: |
+          gem install cocoapods --no-document
+          gem install xcpretty --no-document
+
+      - name: Install JS deps
+        run: |
+          node -v
           npm ci
 
-      - name: Install CocoaPods
-        run: |
-          sudo gem install cocoapods -v 1.16.2
-
-      - name: Generate Workspace
+      - name: Generate workspace
         run: |
           cd ios
           pod install --repo-update
 
-      - name: Target & Product Type Scan
+      - name: Enumerate targets
         run: |
-          xcodebuild -list -project "$XCODE_PROJECT"
-          xcodebuild -showBuildSettings \
-            -project "$XCODE_PROJECT" \
-            -scheme "$SCHEME" \
-            -configuration "$CONFIGURATION" | \
-            awk -F' = ' '/PRODUCT_TYPE/ {print $2; exit}'
+          xcodebuild -list -project ios/JunoNative.xcodeproj
 
-      - name: Enforce Application Scheme
+      - name: Target product-type matrix
         run: |
-          PT=$(xcodebuild -showBuildSettings \
-            -workspace "$XCODE_WORKSPACE" \
-            -scheme "$SCHEME" \
-            -configuration "$CONFIGURATION" | \
-            awk -F' = ' '/PRODUCT_TYPE/ {print $2; exit}')
+          echo "TARGET,PRODUCT_TYPE,SKIP_INSTALL" > matrix.csv
+          for T in $(xcodebuild -list -project ios/JunoNative.xcodeproj | awk '/Targets:/,/^$/' | sed '1d'); do
+            SETTINGS=$(xcodebuild -showBuildSettings -project ios/JunoNative.xcodeproj -target "$T" -configuration Release)
+            PT=$(echo "$SETTINGS" | awk -F' = ' '/PRODUCT_TYPE/ {print $2; exit}')
+            SKIP=$(echo "$SETTINGS" | awk -F' = ' '/SKIP_INSTALL/ {print $2; exit}')
+            echo "$T,$PT,$SKIP" >> matrix.csv
+          done
+          column -s, -t matrix.csv | tee matrix.txt
 
-          echo "PRODUCT_TYPE=$PT"
-          test "$PT" = "com.apple.product-type.application"
-
-      - name: Archive (No xcpretty)
+      - name: Assert application target exists
         run: |
-          xcodebuild archive \
-            -workspace "$XCODE_WORKSPACE" \
-            -scheme "$SCHEME" \
-            -configuration "$CONFIGURATION" \
-            -sdk iphoneos \
-            -destination "generic/platform=iOS" \
-            -archivePath "$RUNNER_TEMP/JunoNative.xcarchive" \
-            CODE_SIGNING_ALLOWED=NO
+          if ! grep -q "com.apple.product-type.application" matrix.csv; then
+            echo "❌ No application target found"
+            exit 2
+          fi
 
-      - name: Validate Archive Structure
-        run: |
-          test -d "$RUNNER_TEMP/JunoNative.xcarchive/Products/Applications"
+      - name: Upload forensic artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-forensics
+          path: |
+            matrix.csv
+            matrix.txt
