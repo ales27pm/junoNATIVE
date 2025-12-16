@@ -4,8 +4,13 @@ source 'https://cdn.cocoapods.org/'
 root_path         = File.expand_path('..', __dir__)
 node_modules_path = File.expand_path('../node_modules', __dir__)
 
-require_relative '../node_modules/react-native/scripts/react_native_pods'
-require_relative '../node_modules/@react-native-community/cli-platform-ios/native_modules'
+unless File.directory?(node_modules_path)
+  Pod::UI.puts 'React Native dependencies not found. Run `npm ci` before installing pods.'
+  raise Pod::Informative, "Missing node_modules at #{node_modules_path}"
+end
+
+require File.join(node_modules_path, 'react-native/scripts/react_native_pods')
+require File.join(node_modules_path, '@react-native-community/cli-platform-ios/native_modules')
 
 project 'JunoNative.xcodeproj'
 
@@ -13,16 +18,16 @@ target 'JunoNative' do
   config = use_native_modules!
 
   use_react_native!(
-    path: config[:reactNativePath],
+    path:           config[:reactNativePath],
     hermes_enabled: true,
     fabric_enabled: true,
-    app_path: root_path
+    app_path:       root_path
   )
 
   post_install do |installer|
     react_native_post_install(installer)
 
-    # 1️⃣ All Pods must NEVER be installable products
+    # 🔒 HARD GUARANTEE: Pods never install into archive
     installer.pods_project.targets.each do |t|
       t.build_configurations.each do |c|
         c.build_settings['SKIP_INSTALL'] = 'YES'
@@ -30,15 +35,14 @@ target 'JunoNative' do
       end
     end
 
-    # 2️⃣ The APP target must ALWAYS be installable
-    installer.aggregate_targets.each do |agg|
-      agg.user_project.targets.each do |t|
+    # 🔑 CRITICAL: App target must install
+    installer.aggregate_targets.each do |aggregate|
+      aggregate.user_project.targets.each do |t|
         next unless t.name == 'JunoNative'
 
         t.build_configurations.each do |c|
           c.build_settings['SKIP_INSTALL'] = 'NO'
           c.build_settings['INSTALL_PATH'] = '$(LOCAL_APPS_DIR)'
-          c.build_settings['PRODUCT_NAME'] ||= 'JunoNative'
         end
       end
     end
