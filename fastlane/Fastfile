@@ -167,7 +167,7 @@ platform :ios do
       skip_package_ipa: true,        # <— archive ONLY
       skip_profile_detection: true,
 
-      export_method: "app-store",    # irrelevant during archive-only, but harmless
+      export_method: "app-store-connect",    # irrelevant during archive-only, but harmless
       include_symbols: true,
       include_bitcode: false,
       silent: false,
@@ -187,7 +187,7 @@ platform :ios do
       skip_build_archive: true,
       archive_path: archive_path,
 
-      export_method: "app-store",
+      export_method: "app-store-connect",
       skip_profile_detection: true,
 
       export_options: {
