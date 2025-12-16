@@ -1,7 +1,7 @@
 platform :ios, '15.1'
 source 'https://cdn.cocoapods.org/'
 
-root_path = File.expand_path('..', __dir__)
+root_path         = File.expand_path('..', __dir__)
 node_modules_path = File.expand_path('../node_modules', __dir__)
 
 raise Pod::Informative, 'Missing node_modules. Run npm ci first.' unless File.directory?(node_modules_path)
@@ -15,38 +15,61 @@ target 'JunoNative' do
   config = use_native_modules!
 
   use_react_native!(
-    path: config[:reactNativePath],
+    path:           config[:reactNativePath],
     hermes_enabled: true,
     fabric_enabled: true,
-    app_path: root_path
+    app_path:       root_path
   )
 
   post_install do |installer|
     react_native_post_install(installer)
 
+    # --------------------------------------------------------------------
+    # Pod targets: enforce consistent deployment + modern C++ across Pods
+    # --------------------------------------------------------------------
     installer.pods_project.targets.each do |target|
       target.build_configurations.each do |cfg|
-        # Enforce deployment target consistency
         cfg.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.1'
-
-        # Enforce modern C++
         cfg.build_settings['CLANG_CXX_LANGUAGE_STANDARD'] = 'c++20'
         cfg.build_settings['CLANG_CXX_LIBRARY'] = 'libc++'
       end
     end
 
+    # --------------------------------------------------------------------
     # 🔴 CRITICAL FIX — DO NOT REMOVE
+    # Ensure the *app target* inherits CocoaPods linker flags.
+    # Fixes "target overrides OTHER_LDFLAGS" => archive/link failures (Exit 70).
+    # --------------------------------------------------------------------
     installer.aggregate_targets.each do |aggregate|
-      aggregate.user_project.targets.each do |t|
+      user_project = aggregate.user_project
+      next unless user_project
+
+      user_project.targets.each do |t|
         next unless t.name == 'JunoNative'
 
         t.build_configurations.each do |cfg|
-          flags = cfg.build_settings['OTHER_LDFLAGS'] || []
-          flags = [flags] unless flags.is_a?(Array)
+          flags = cfg.build_settings['OTHER_LDFLAGS']
 
+          # Normalize to Array
+          flags =
+            case flags
+            when nil
+              []
+            when String
+              # Some projects store OTHER_LDFLAGS as a single string; split safely
+              flags.split(/\s+/).reject(&:empty?)
+            when Array
+              flags
+            else
+              Array(flags)
+            end
+
+          # Prepend inherited once
           unless flags.include?('$(inherited)')
-            cfg.build_settings['OTHER_LDFLAGS'] = ['$(inherited)'] + flags
+            flags.unshift('$(inherited)')
           end
+
+          cfg.build_settings['OTHER_LDFLAGS'] = flags
         end
       end
     end
