@@ -29,27 +29,17 @@ end
 
 puts "✅ Ensuring shared scheme '#{scheme_name}' builds target '#{target.name}'"
 
-scheme_dir = File.join(IOS_PROJ, "xcshareddata", "xcschemes")
-FileUtils.mkdir_p(scheme_dir)
+# Always generate a fresh scheme to avoid nil entries quirks across xcodeproj versions.
+scheme = Xcodeproj::XCScheme.new
 
-scheme_path = File.join(scheme_dir, "#{scheme_name}.xcscheme")
-
-scheme =
-  if File.exist?(scheme_path)
-    Xcodeproj::XCScheme.new(scheme_path)
-  else
-    Xcodeproj::XCScheme.new
-  end
-
-# Ensure build action contains the app target and is archivable
-scheme.build_action.entries.clear
+# Add the app target to the build action (this creates build_action + entries safely)
 scheme.add_build_target(target)
 
-# Ensure archive action exists and uses Release by default
+# Ensure archive action uses Release (what xcodebuild archive expects)
 scheme.archive_action ||= Xcodeproj::XCScheme::ArchiveAction.new(nil)
 scheme.archive_action.build_configuration = "Release"
 
-# Launch/profile/analyze/test aren’t required for CI export, but keep them sane
+# Keep these sane (not strictly required for CI export, but harmless)
 scheme.launch_action ||= Xcodeproj::XCScheme::LaunchAction.new(nil)
 scheme.launch_action.build_configuration = "Release"
 scheme.launch_action.runnable = Xcodeproj::XCScheme::BuildableProductRunnable.new(target)
@@ -64,6 +54,13 @@ scheme.analyze_action.build_configuration = "Release"
 scheme.test_action ||= Xcodeproj::XCScheme::TestAction.new(nil)
 scheme.test_action.build_configuration = "Release"
 
+# Remove any old shared scheme file so we definitely overwrite
+scheme_dir  = File.join(IOS_PROJ, "xcshareddata", "xcschemes")
+scheme_path = File.join(scheme_dir, "#{scheme_name}.xcscheme")
+FileUtils.mkdir_p(scheme_dir)
+FileUtils.rm_f(scheme_path)
+
+# Save as a SHARED scheme
 scheme.save_as(IOS_PROJ, scheme_name, true)
 
 puts "✅ Shared scheme written: #{scheme_path}"
