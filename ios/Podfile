@@ -4,26 +4,8 @@ source 'https://cdn.cocoapods.org/'
 root_path         = File.expand_path('..', __dir__)
 node_modules_path = File.expand_path('../node_modules', __dir__)
 
-unless File.directory?(node_modules_path)
-  Pod::UI.puts 'React Native dependencies not found. Run `npm ci` (or yarn/pnpm install) before installing pods.'
-  raise Pod::Informative, "Missing node_modules at #{node_modules_path}; install JavaScript dependencies and retry."
-end
-
-react_native_pods = File.join(node_modules_path, 'react-native', 'scripts', 'react_native_pods.rb')
-cli_platform_ios  = File.join(node_modules_path, '@react-native-community', 'cli-platform-ios', 'native_modules.rb')
-
-unless File.exist?(react_native_pods)
-  Pod::UI.puts 'React Native pods script not found. Ensure `react-native` is installed in node_modules.'
-  raise Pod::Informative, "Expected react_native_pods.rb at #{react_native_pods}"
-end
-
-unless File.exist?(cli_platform_ios)
-  Pod::UI.puts 'React Native CLI iOS native_modules.rb not found. Ensure @react-native-community/cli-platform-ios is installed.'
-  raise Pod::Informative, "Expected native_modules.rb at #{cli_platform_ios}"
-end
-
-require react_native_pods
-require cli_platform_ios
+require_relative '../node_modules/react-native/scripts/react_native_pods'
+require_relative '../node_modules/@react-native-community/cli-platform-ios/native_modules'
 
 project 'JunoNative.xcodeproj'
 
@@ -31,51 +13,34 @@ target 'JunoNative' do
   config = use_native_modules!
 
   use_react_native!(
-    path:           config[:reactNativePath],
+    path: config[:reactNativePath],
     hermes_enabled: true,
     fabric_enabled: true,
-    app_path:       root_path
+    app_path: root_path
   )
-
-  # If you have app extensions, add them as separate targets here and keep SKIP_INSTALL = YES for them.
 
   post_install do |installer|
     react_native_post_install(installer)
 
-    # ---------------------------------------------------------
-    # XCODE 16+ HARD FIX: prevent "Generic Archive" (.app missing)
-    #
-    # RULES:
-    #  - ALL Pods targets => SKIP_INSTALL = YES
-    #  - Main app target  => SKIP_INSTALL = NO and INSTALL_PATH = $(LOCAL_APPS_DIR)
-    # ---------------------------------------------------------
-
-    # 1) Pods project targets: never "install" into the archive
+    # 1️⃣ All Pods must NEVER be installable products
     installer.pods_project.targets.each do |t|
       t.build_configurations.each do |c|
-        c.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.1'
         c.build_settings['SKIP_INSTALL'] = 'YES'
+        c.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.1'
       end
     end
 
-    # 2) User project (your app): MUST install into archive
-    installer.aggregate_targets.each do |aggregate|
-      user_project = aggregate.user_project
-      next unless user_project
-
-      user_project.targets.each do |t|
+    # 2️⃣ The APP target must ALWAYS be installable
+    installer.aggregate_targets.each do |agg|
+      agg.user_project.targets.each do |t|
         next unless t.name == 'JunoNative'
 
         t.build_configurations.each do |c|
-          c.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.1'
           c.build_settings['SKIP_INSTALL'] = 'NO'
           c.build_settings['INSTALL_PATH'] = '$(LOCAL_APPS_DIR)'
+          c.build_settings['PRODUCT_NAME'] ||= 'JunoNative'
         end
       end
-
-      user_project.save
     end
-
-    Pod::UI.puts '🔧 Enforced SKIP_INSTALL matrix (Pods=YES, App=NO) + INSTALL_PATH=$(LOCAL_APPS_DIR)'
   end
 end
