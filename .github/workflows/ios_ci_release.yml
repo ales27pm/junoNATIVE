@@ -1,53 +1,51 @@
-name: iOS CI & TestFlight Upload (Fastlane)
+name: iOS CI & Native Artifact Release
 
 on:
   push:
-    branches: [ "main" ]
+    branches:
+      - main
     tags:
       - "ios-v*"
-  workflow_dispatch: {}
+  workflow_dispatch:
 
 jobs:
   build-and-release-ios:
     runs-on: macos-14
-    timeout-minutes: 60
 
     env:
-      # App identity
+      CI: true
+      BUNDLE_PATH: vendor/bundle
+
+      # New Architecture everywhere (pods + xcodebuild)
+      RCT_NEW_ARCH_ENABLED: "1"
+
+      # App & team identifiers
+      APPLE_ID: ${{ secrets.APPLE_ID }}
       APP_IDENTIFIER: ${{ secrets.APP_IDENTIFIER }}
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-      APPLE_ID: ${{ secrets.APPLE_ID }}
 
       # App Store Connect API key
       APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
       APP_STORE_CONNECT_API_KEY_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ISSUER_ID }}
       APP_STORE_CONNECT_API_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_API_KEY_BASE64 }}
-      # (Optional: only needed if you *don't* use BASE64)
-      APP_STORE_CONNECT_API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
-      APP_STORE_CONNECT_API_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_API_ISSUER_ID }}
 
-      # Signing assets (match your REAL secret names)
-      IOS_DIST_CERT_BASE64: ${{ secrets.IOS_DIST_CERT_BASE64 }}
-      IOS_DIST_CERT_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
+      # Provisioning profile (support both names)
       IOS_PROFILE_BASE64: ${{ secrets.IOS_PROFILE_BASE64 }}
+      IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROFILE_BASE64 }}
 
-      # Keychain password (optional)
+      # Distribution certificate (support both names)
+      IOS_DIST_CERT_BASE64: ${{ secrets.IOS_DIST_CERT_BASE64 }}
+      IOS_CERT_P12_BASE64: ${{ secrets.IOS_DIST_CERT_BASE64 }}
+
+      IOS_DIST_CERT_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
+      IOS_CERT_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
+
+      # Optional. If you don't set this secret, Fastlane uses a safe default.
       MATCH_KEYCHAIN_PASSWORD: ${{ secrets.MATCH_KEYCHAIN_PASSWORD }}
 
-      CI: "true"
-
     steps:
-      - name: 🧾 Checkout
+      - name: 🧾 Checkout code
         uses: actions/checkout@v4
-
-      - name: 🟢 Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: "npm"
-
-      - name: 📦 Install JS deps
-        run: npm ci
 
       - name: 💎 Setup Ruby
         uses: ruby/setup-ruby@v1
@@ -55,8 +53,28 @@ jobs:
           ruby-version: "3.3"
           bundler-cache: true
 
-      - name: 🧰 Install Bundler deps
-        run: bundle install --path vendor/bundle
+      - name: 🧩 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
 
-      - name: 🚀 Build + Upload TestFlight
+      - name: 📦 Install JS dependencies
+        run: npm ci
+
+      - name: 📚 Install Ruby gems
+        run: bundle install --jobs 4 --retry 3
+
+      - name: 🚀 Build & upload via Fastlane
         run: bundle exec fastlane ios ios_ci
+
+      # Optional: keep artifacts for debugging even if upload fails
+      - name: 📎 Upload build artifacts
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-build
+          path: |
+            fastlane/build/ios
+            **/*.xcdistributionlogs
+          if-no-files-found: ignore
