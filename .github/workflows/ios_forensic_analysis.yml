@@ -8,56 +8,260 @@ on:
 jobs:
   analyze-ios-project:
     runs-on: macos-15
+    timeout-minutes: 45
+
+    env:
+      IOS_DIR: ios
+      XCODE_PROJECT: ios/JunoNative.xcodeproj
+      XCODE_WORKSPACE: ios/JunoNative.xcworkspace
+      CONFIGURATION: Release
+      NODE_VERSION: "22"
 
     steps:
-      - uses: actions/checkout@v4
+      - name: 🧾 Checkout
+        uses: actions/checkout@v4
 
-      - name: Select Xcode 16
+      - name: 🧰 Select Xcode 16
+        shell: bash
         run: |
+          set -euo pipefail
           sudo xcode-select -s /Applications/Xcode_16.app
           xcodebuild -version
 
-      - name: Install Ruby tools
-        run: |
-          gem install cocoapods --no-document
-          gem install xcpretty --no-document
+      - name: 🟩 Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
 
-      - name: Install JS deps
+      - name: 🧠 Detect JS package manager
+        id: pm
+        shell: bash
         run: |
-          node -v
-          npm ci
+          set -euo pipefail
+          if [ -f "yarn.lock" ]; then
+            echo "manager=yarn" >> "$GITHUB_OUTPUT"
+          elif [ -f "package-lock.json" ]; then
+            echo "manager=npm" >> "$GITHUB_OUTPUT"
+          elif [ -f "pnpm-lock.yaml" ]; then
+            echo "manager=pnpm" >> "$GITHUB_OUTPUT"
+          else
+            echo "manager=npm" >> "$GITHUB_OUTPUT"
+          fi
+          echo "Detected: ${{ steps.pm.outputs.manager }}"
 
-      - name: Generate workspace
+      - name: 📦 Install JS deps (lockfile-aware)
+        shell: bash
         run: |
-          cd ios
+          set -euo pipefail
+          corepack enable || true
+
+          case "${{ steps.pm.outputs.manager }}" in
+            yarn)
+              yarn --version
+              yarn install --frozen-lockfile
+              ;;
+            pnpm)
+              corepack prepare pnpm@latest --activate
+              pnpm --version
+              pnpm install --frozen-lockfile
+              ;;
+            npm)
+              node --version
+              npm --version
+              if [ -f "package-lock.json" ]; then
+                npm ci
+              else
+                npm install
+              fi
+              ;;
+          esac
+
+      - name: 💎 Setup Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.2"
+
+      - name: 💎 Install CocoaPods + xcpretty
+        shell: bash
+        run: |
+          set -euo pipefail
+          gem install cocoapods -N
+          gem install xcpretty -N
+          pod --version
+          xcpretty --version || true
+
+      - name: 🧩 Generate workspace (pod install)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "${IOS_DIR}"
           pod install --repo-update
+          cd -
+          test -f "${XCODE_WORKSPACE}" || (echo "❌ Workspace not generated: ${XCODE_WORKSPACE}" && exit 2)
 
-      - name: Enumerate targets
+      - name: 🧾 List project targets + schemes
+        shell: bash
         run: |
-          xcodebuild -list -project ios/JunoNative.xcodeproj
+          set -euo pipefail
+          echo "### xcodebuild -list (project)" | tee xcode_list_project.txt
+          xcodebuild -list -project "${XCODE_PROJECT}" | tee -a xcode_list_project.txt
 
-      - name: Target product-type matrix
-        run: |
-          echo "TARGET,PRODUCT_TYPE,SKIP_INSTALL" > matrix.csv
-          for T in $(xcodebuild -list -project ios/JunoNative.xcodeproj | awk '/Targets:/,/^$/' | sed '1d'); do
-            SETTINGS=$(xcodebuild -showBuildSettings -project ios/JunoNative.xcodeproj -target "$T" -configuration Release)
-            PT=$(echo "$SETTINGS" | awk -F' = ' '/PRODUCT_TYPE/ {print $2; exit}')
-            SKIP=$(echo "$SETTINGS" | awk -F' = ' '/SKIP_INSTALL/ {print $2; exit}')
-            echo "$T,$PT,$SKIP" >> matrix.csv
-          done
-          column -s, -t matrix.csv | tee matrix.txt
+          echo "### xcodebuild -list (workspace)" | tee xcode_list_workspace.txt
+          xcodebuild -list -workspace "${XCODE_WORKSPACE}" | tee -a xcode_list_workspace.txt
 
-      - name: Assert application target exists
+      - name: 🧪 Target build-settings matrix (project targets)
+        shell: bash
         run: |
-          if ! grep -q "com.apple.product-type.application" matrix.csv; then
-            echo "❌ No application target found"
+          set -euo pipefail
+
+          echo "TARGET,PRODUCT_TYPE,PRODUCT_BUNDLE_IDENTIFIER,SKIP_INSTALL,INSTALL_PATH,INFOPLIST_FILE,OTHER_LDFLAGS" > matrix.csv
+
+          TARGETS=$(xcodebuild -list -project "${XCODE_PROJECT}" | awk '
+            $0 ~ /^Targets:/ {in_t=1; next}
+            in_t && NF==0 {exit}
+            in_t {print $1}
+          ')
+
+          if [ -z "${TARGETS:-}" ]; then
+            echo "❌ No targets discovered in project."
             exit 2
           fi
 
-      - name: Upload forensic artifacts
+          for T in $TARGETS; do
+            echo "Inspecting target: $T"
+
+            SETTINGS=$(xcodebuild \
+              -showBuildSettings \
+              -project "${XCODE_PROJECT}" \
+              -target "$T" \
+              -configuration "${CONFIGURATION}" 2>/dev/null || true)
+
+            PT=$(echo "$SETTINGS" | awk -F' = ' '/^ *PRODUCT_TYPE/ {print $2; exit}')
+            BID=$(echo "$SETTINGS" | awk -F' = ' '/^ *PRODUCT_BUNDLE_IDENTIFIER/ {print $2; exit}')
+            SKIP=$(echo "$SETTINGS" | awk -F' = ' '/^ *SKIP_INSTALL/ {print $2; exit}')
+            IP=$(echo "$SETTINGS" | awk -F' = ' '/^ *INSTALL_PATH/ {print $2; exit}')
+            PLIST=$(echo "$SETTINGS" | awk -F' = ' '/^ *INFOPLIST_FILE/ {print $2; exit}')
+            LDFLAGS=$(echo "$SETTINGS" | awk -F' = ' '/^ *OTHER_LDFLAGS/ {print $2; exit}')
+
+            # CSV-escape commas by replacing with semicolons (good enough for forensics)
+            PT=${PT//,/;}
+            BID=${BID//,/;}
+            SKIP=${SKIP//,/;}
+            IP=${IP//,/;}
+            PLIST=${PLIST//,/;}
+            LDFLAGS=${LDFLAGS//,/;}
+
+            echo "$T,$PT,$BID,$SKIP,$IP,$PLIST,$LDFLAGS" >> matrix.csv
+          done
+
+          column -s, -t matrix.csv | tee matrix.txt || true
+
+      - name: 🔎 Find application targets (project)
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "### Application targets (PRODUCT_TYPE=application)" | tee app_targets.txt
+          grep "com.apple.product-type.application" matrix.csv | tee -a app_targets.txt || true
+
+          COUNT=$(grep -c "com.apple.product-type.application" matrix.csv || true)
+          echo "Found $COUNT application target(s)" | tee -a app_targets.txt
+
+          # Don't fail yet — we also check schemes below (sometimes schemes differ from raw targets)
+
+      - name: 🧠 Find an application scheme (workspace schemes)
+        id: pick
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SCHEMES=$(xcodebuild -list -workspace "${XCODE_WORKSPACE}" | awk '
+            $0 ~ /^Schemes:/ {in_s=1; next}
+            in_s && NF==0 {exit}
+            in_s {print $1}
+          ')
+
+          if [ -z "${SCHEMES:-}" ]; then
+            echo "❌ No schemes found in workspace."
+            exit 2
+          fi
+
+          PICKED=""
+          for S in $SCHEMES; do
+            PT=$(xcodebuild -showBuildSettings \
+              -workspace "${XCODE_WORKSPACE}" \
+              -scheme "$S" \
+              -configuration "${CONFIGURATION}" 2>/dev/null | awk -F' = ' '/^ *PRODUCT_TYPE/ {print $2; exit}' || true)
+
+            if [ "$PT" = "com.apple.product-type.application" ]; then
+              PICKED="$S"
+              break
+            fi
+          done
+
+          echo "SCHEMES=$SCHEMES" | tee schemes_scanned.txt
+          echo "PICKED_SCHEME=$PICKED" | tee picked_scheme.txt
+
+          echo "picked_scheme=$PICKED" >> "$GITHUB_OUTPUT"
+
+          if [ -z "$PICKED" ]; then
+            echo "❌ No application scheme found in workspace."
+            echo "This means your 'JunoNative' scheme/target is not an app (likely a static lib)."
+            exit 2
+          fi
+
+      - name: 🏗️ Attempt unsigned archive (for structure verification)
+        shell: bash
+        run: |
+          set -euo pipefail
+          ARCHIVE_PATH="$RUNNER_TEMP/JunoNative_Forensics.xcarchive"
+          rm -rf "$ARCHIVE_PATH"
+
+          SCHEME="${{ steps.pick.outputs.picked_scheme }}"
+          echo "Archiving scheme: $SCHEME" | tee archive_attempt.txt
+
+          set +o pipefail
+          xcodebuild \
+            -workspace "${XCODE_WORKSPACE}" \
+            -scheme "$SCHEME" \
+            -configuration "${CONFIGURATION}" \
+            -sdk iphoneos \
+            -destination "generic/platform=iOS" \
+            -archivePath "$ARCHIVE_PATH" \
+            CODE_SIGNING_ALLOWED=NO \
+            archive 2>&1 | tee xcodebuild_archive_raw.log | xcpretty
+          XC=${PIPESTATUS[0]}
+          set -o pipefail
+
+          echo "xcodebuild exit code: $XC" | tee -a archive_attempt.txt
+          if [ "$XC" -ne 0 ]; then
+            echo "❌ Archive failed (unsigned)."
+            exit $XC
+          fi
+
+          echo "Archive tree:" | tee archive_tree.txt
+          find "$ARCHIVE_PATH" -maxdepth 4 -print | tee -a archive_tree.txt
+
+          if [ ! -d "$ARCHIVE_PATH/Products/Applications" ]; then
+            echo "❌ Missing Products/Applications => Generic Archive" | tee -a archive_attempt.txt
+            exit 2
+          fi
+
+          echo "✅ Apps found:" | tee -a archive_attempt.txt
+          ls -la "$ARCHIVE_PATH/Products/Applications" | tee -a archive_attempt.txt
+
+      - name: 📎 Upload forensic artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: ios-forensics
           path: |
+            xcode_list_project.txt
+            xcode_list_workspace.txt
             matrix.csv
             matrix.txt
+            app_targets.txt
+            schemes_scanned.txt
+            picked_scheme.txt
+            archive_attempt.txt
+            archive_tree.txt
+            xcodebuild_archive_raw.log
