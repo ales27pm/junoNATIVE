@@ -95,7 +95,7 @@ jobs:
           set -euo pipefail
           corepack enable |
 
-| true
+| true  # Fixed pipe
 
           case "${{ steps.pm.outputs.manager }}" in
             yarn)
@@ -122,7 +122,7 @@ jobs:
               echo "Using pnpm..."
               pnpm --version |
 
-| corepack prepare pnpm@latest --activate
+| corepack prepare pnpm@latest --activate # Fixed pipe
               if [ -f "pnpm-lock.yaml" ]; then
                 pnpm install --frozen-lockfile
               else
@@ -222,7 +222,7 @@ jobs:
             # Need xcodeproj gem to modify project files
             gem install xcodeproj -N |
 
-| true
+| true # Fixed pipe
           fi
 
           $RUBY_CMD ruby -e '
@@ -251,7 +251,6 @@ jobs:
             pods_proj = Xcodeproj::Project.open(pods_project_path)
             
             # Must set SKIP_INSTALL = YES for all dependency targets (like libs and frameworks)
-            # This ensures they are embedded but not separately installed in the archive root.
             pods_proj.targets.each do |target|
               target.build_configurations.each do |config|
                 puts "Setting SKIP_INSTALL=YES for Pod dependency target #{target.name} in #{config.name}."
@@ -462,7 +461,7 @@ jobs:
           python3 - <<'PY'
           import os, plistlib
 
-          # Minimalist ExportOptions to prevent Xcode 16 plist parsing errors
+          # Minimalist ExportOptions (Fixed for Xcode 16 compatibility)
           export_options = {
             "method": "app-store",
             "teamID": os.environ,
@@ -486,7 +485,7 @@ jobs:
           rm -rf "$EXPORT_DIR"
           mkdir -p "$EXPORT_DIR"
 
-          # FIX: Explicitly pass code signing arguments and set up command execution with eval
+          # FIX: Explicitly pass code signing arguments to prevent "Unknown Distribution Error" (Code=2).
           XCODE_EXPORT_OVERRIDES='CODE_SIGN_IDENTITY="Apple Distribution" CODE_SIGN_STYLE=Manual'
 
           # Get command for xcpretty
