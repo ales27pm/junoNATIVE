@@ -95,7 +95,7 @@ jobs:
           set -euo pipefail
           corepack enable |
 
-| true  # Fixed pipe
+| true
 
           case "${{ steps.pm.outputs.manager }}" in
             yarn)
@@ -122,7 +122,7 @@ jobs:
               echo "Using pnpm..."
               pnpm --version |
 
-| corepack prepare pnpm@latest --activate # Fixed pipe
+| corepack prepare pnpm@latest --activate
               if [ -f "pnpm-lock.yaml" ]; then
                 pnpm install --frozen-lockfile
               else
@@ -222,7 +222,7 @@ jobs:
             # Need xcodeproj gem to modify project files
             gem install xcodeproj -N |
 
-| true # Fixed pipe
+| true
           fi
 
           $RUBY_CMD ruby -e '
