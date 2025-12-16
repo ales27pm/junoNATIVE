@@ -16,7 +16,7 @@ jobs:
     env:
       # --- Required secrets (GitHub repo secrets) ---
       APPLE_ID: ${{ secrets.APPLE_ID }}
-      APP_IDENTIFIER: ${{ secrets.APP_IDENTIFIER }} # bundle id, e.g. com.yourcompany.app
+      APP_IDENTIFIER: ${{ secrets.APP_IDENTIFIER }}
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
       # App Store Connect API key (.p8) as BASE64 (single-line)
@@ -57,7 +57,9 @@ jobs:
           echo "ASC_DIR=$RUNNER_TEMP/asc" >> "$GITHUB_ENV"
           echo "ASC_API_KEY_JSON=$RUNNER_TEMP/api_key.json" >> "$GITHUB_ENV"
           echo "PROFILE_PLIST=$RUNNER_TEMP/profile.plist" >> "$GITHUB_ENV"
-          echo "XCODEBUILD_LOG=$RUNNER_TEMP/xcodebuild.log" >> "$GITHUB_ENV"
+          echo "XCPRETTY_CMD=" >> "$GITHUB_ENV"
+          echo "XCODEBUILD_ARCHIVE_LOG=$RUNNER_TEMP/xcodebuild-archive.log" >> "$GITHUB_ENV"
+          echo "XCODEBUILD_EXPORT_LOG=$RUNNER_TEMP/xcodebuild-export.log" >> "$GITHUB_ENV"
 
       - name: 🧠 Detect JS package manager (Option B)
         id: pm
@@ -73,12 +75,13 @@ jobs:
           else
             echo "manager=yarn" >> "$GITHUB_OUTPUT"
           fi
+          echo "Detected JS package manager: $(cat "$GITHUB_OUTPUT" | grep -m1 "^manager=" | cut -d= -f2)"
 
       - name: 🟩 Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          # IMPORTANT: do not enable cache here unless a lockfile definitely exists (setup-node hard-fails otherwise)
+          # IMPORTANT: no cache unless lockfile definitely exists (setup-node hard-fails otherwise)
 
       - name: 📦 Install JS deps (lockfile-aware)
         shell: bash
@@ -93,7 +96,7 @@ jobs:
               if [ -f "yarn.lock" ]; then
                 yarn install --frozen-lockfile
               else
-                echo "⚠️ No yarn.lock found; running non-frozen install."
+                echo "⚠️ No yarn.lock found; running non-frozen install (commit yarn.lock for deterministic builds)."
                 yarn install
               fi
               ;;
@@ -155,40 +158,47 @@ jobs:
           gem install cocoapods -N
           gem install xcpretty -N
 
-      - name: 🧰 Install CocoaPods
+      - name: 🧰 Install CocoaPods (with fallback)
         shell: bash
         run: |
           set -euo pipefail
           cd ios
           if [ "${{ steps.ruby.outputs.use_bundler }}" = "true" ]; then
-            bundle exec pod install --repo-update
+            if bundle exec pod --version >/dev/null 2>&1; then
+              bundle exec pod install --repo-update
+            else
+              echo "⚠️ cocoapods not present in bundle; installing globally as fallback."
+              gem install cocoapods -N
+              pod install --repo-update
+            fi
           else
             pod install --repo-update
           fi
 
-      - name: 🧾 Ensure xcpretty exists (fixes: xcpretty: command not found)
+      - name: "🧾 Ensure xcpretty exists (fixes: xcpretty: command not found)"
         shell: bash
         run: |
           set -euo pipefail
+
+          # Prefer bundle exec if available (Gemfile), otherwise fall back to global install.
           if [ "${{ steps.ruby.outputs.use_bundler }}" = "true" ]; then
             if bundle exec ruby -S xcpretty --version >/dev/null 2>&1; then
               echo "XCPRETTY_CMD=bundle exec xcpretty" >> "$GITHUB_ENV"
               bundle exec ruby -S xcpretty --version || true
               exit 0
             fi
-            echo "xcpretty not present in Gemfile/Gemfile.lock. Add it, or remove the formatting pipe."
-            exit 1
-          else
-            if command -v xcpretty >/dev/null 2>&1; then
-              echo "XCPRETTY_CMD=xcpretty" >> "$GITHUB_ENV"
-              xcpretty --version || true
-              exit 0
-            fi
-            echo "xcpretty missing; installing globally..."
-            gem install xcpretty -N
+          fi
+
+          if command -v xcpretty >/dev/null 2>&1; then
             echo "XCPRETTY_CMD=xcpretty" >> "$GITHUB_ENV"
             xcpretty --version || true
+            exit 0
           fi
+
+          echo "xcpretty not found; installing globally..."
+          gem install xcpretty -N
+          echo "XCPRETTY_CMD=xcpretty" >> "$GITHUB_ENV"
+          xcpretty --version || true
 
       - name: 🔐 Create temporary keychain
         shell: bash
@@ -237,9 +247,6 @@ jobs:
           with open(out, "wb") as f:
             f.write(data)
           print("p12 bytes:", len(data))
-          if len(data) < 500:
-            print("Decoded p12 is suspiciously small (<500 bytes).")
-            sys.exit(3)
           PY
 
           security import "$CERT_P12" \
@@ -254,6 +261,11 @@ jobs:
 
           echo "Available signing identities:"
           security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+
+          if ! security find-identity -v -p codesigning "$KEYCHAIN_PATH" | grep -qE "\) "; then
+            echo "No codesigning identity found in keychain after import."
+            exit 1
+          fi
 
       - name: 📄 Decode provisioning profile (IOS_PROFILE_BASE64)
         shell: bash
@@ -344,11 +356,10 @@ jobs:
         run: |
           set -euo pipefail
           rm -rf "$ARCHIVE_PATH"
-          rm -f "$XCODEBUILD_LOG"
 
-          # Avoid failing the job due to downstream formatter "broken pipe".
+          # Use a safe pipeline: capture xcodebuild exit code, don't fail on tee/xcpretty SIGPIPE.
+          set +o pipefail
           if [ -n "${XCPRETTY_CMD:-}" ]; then
-            set +o pipefail
             xcodebuild \
               -workspace "$XCODE_WORKSPACE" \
               -scheme "$XCODE_SCHEME" \
@@ -357,11 +368,8 @@ jobs:
               -archivePath "$ARCHIVE_PATH" \
               -destination "generic/platform=iOS" \
               DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
-              PRODUCT_BUNDLE_IDENTIFIER="$APP_IDENTIFIER" \
-              archive 2>&1 | tee "$XCODEBUILD_LOG" | $XCPRETTY_CMD
+              archive 2>&1 | tee "$XCODEBUILD_ARCHIVE_LOG" | $XCPRETTY_CMD
             XC=${PIPESTATUS[0]}
-            set -o pipefail
-            exit $XC
           else
             xcodebuild \
               -workspace "$XCODE_WORKSPACE" \
@@ -371,16 +379,15 @@ jobs:
               -archivePath "$ARCHIVE_PATH" \
               -destination "generic/platform=iOS" \
               DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
-              PRODUCT_BUNDLE_IDENTIFIER="$APP_IDENTIFIER" \
-              archive 2>&1 | tee "$XCODEBUILD_LOG"
+              archive 2>&1 | tee "$XCODEBUILD_ARCHIVE_LOG"
+            XC=${PIPESTATUS[0]}
           fi
-
-      - name: 🧾 Verify archive exists
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -d "$ARCHIVE_PATH"
-          test -f "$ARCHIVE_INFO_PLIST" || true
+          set -o pipefail
+          if [ "${XC:-1}" -eq 0 ] && [ ! -d "$ARCHIVE_PATH" ]; then
+            echo "Archive directory missing at $ARCHIVE_PATH"
+            exit 1
+          fi
+          exit $XC
 
       - name: 🧾 Create ExportOptions.plist (App Store)
         shell: bash
@@ -412,26 +419,28 @@ jobs:
           rm -rf "$EXPORT_DIR"
           mkdir -p "$EXPORT_DIR"
 
+          set +o pipefail
           if [ -n "${XCPRETTY_CMD:-}" ]; then
-            set +o pipefail
             xcodebuild \
               -exportArchive \
               -archivePath "$ARCHIVE_PATH" \
               -exportPath "$EXPORT_DIR" \
-              -exportOptionsPlist "$EXPORT_OPTIONS_PLIST" 2>&1 | $XCPRETTY_CMD
+              -exportOptionsPlist "$EXPORT_OPTIONS_PLIST" 2>&1 | tee "$XCODEBUILD_EXPORT_LOG" | $XCPRETTY_CMD
             XC=${PIPESTATUS[0]}
-            set -o pipefail
-            exit $XC
           else
             xcodebuild \
               -exportArchive \
               -archivePath "$ARCHIVE_PATH" \
               -exportPath "$EXPORT_DIR" \
-              -exportOptionsPlist "$EXPORT_OPTIONS_PLIST"
+              -exportOptionsPlist "$EXPORT_OPTIONS_PLIST" 2>&1 | tee "$XCODEBUILD_EXPORT_LOG"
+            XC=${PIPESTATUS[0]}
           fi
-
-          ls -la "$EXPORT_DIR"
-          test -n "$(find "$EXPORT_DIR" -maxdepth 1 -name "*.ipa" -print -quit)"
+          set -o pipefail
+          if [ "${XC:-1}" -eq 0 ]; then
+            ls -la "$EXPORT_DIR"
+            test -n "$(find "$EXPORT_DIR" -maxdepth 1 -name "*.ipa" -print -quit)"
+          fi
+          exit $XC
 
       - name: 🚀 Upload to TestFlight (fastlane pilot)
         shell: bash
@@ -478,10 +487,11 @@ jobs:
           path: |
             ${{ env.EXPORT_OPTIONS_PLIST }}
             ${{ env.PROFILE_PLIST }}
-            ${{ env.XCODEBUILD_LOG }}
             ${{ env.ARCHIVE_INFO_PLIST }}
             ${{ env.ARCHIVE_PATH }}
             ${{ env.EXPORT_DIR }}
+            ${{ env.XCODEBUILD_ARCHIVE_LOG }}
+            ${{ env.XCODEBUILD_EXPORT_LOG }}
 
       - name: 🧹 Cleanup keychain
         if: always()
