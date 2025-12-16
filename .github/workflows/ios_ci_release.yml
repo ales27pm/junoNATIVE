@@ -11,7 +11,11 @@ jobs:
     runs-on: macos-14
 
     env:
-      # App metadata
+      CI: "true"
+      BUNDLE_PATH: vendor/bundle
+      RCT_NEW_ARCH_ENABLED: "1"
+
+      # App identifiers
       APP_IDENTIFIER: ${{ secrets.APP_IDENTIFIER }}
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
@@ -20,70 +24,76 @@ jobs:
       APP_STORE_CONNECT_API_KEY_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ISSUER_ID }}
       APP_STORE_CONNECT_API_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_API_KEY_BASE64 }}
 
-      # Manual signing inputs
+      # Signing assets
       IOS_DIST_CERT_BASE64: ${{ secrets.IOS_DIST_CERT_BASE64 }}
       IOS_DIST_CERT_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
       IOS_PROFILE_BASE64: ${{ secrets.IOS_PROFILE_BASE64 }}
-
-      MATCH_KEYCHAIN_PASSWORD: ${{ secrets.MATCH_KEYCHAIN_PASSWORD }}
       KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
-      CI: "true"
+      MATCH_KEYCHAIN_PASSWORD: ${{ secrets.MATCH_KEYCHAIN_PASSWORD }}
 
     steps:
-      - name: 🧾 Checkout source
+      - name: 🧾 Checkout repository
         uses: actions/checkout@v4
 
-      - name: 📂 Ensure ios directory exists
-        shell: bash
+      - name: 🧱 Ensure ios directory exists
         run: |
           set -e
           if [ ! -d "ios" ]; then
-            echo "⚙️ Creating ios directory (required for CocoaPods)"
+            echo "⚙️ Creating missing ios directory"
             mkdir ios
           fi
-          ls -la ios || true
+          ls -la ios
 
-      - name: 🍺 Install dependencies (XcodeGen + CocoaPods)
-        shell: bash
+      - name: 🍺 Install macOS dependencies
         run: |
-          set -euxo pipefail
           brew update
           brew install xcodegen cocoapods
-          which xcodegen
           xcodegen version
           pod --version
 
-      - name: 🟢 Setup Node.js 22
+      - name: 🧩 Setup Node.js 22
         uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: yarn
 
-      - name: 🧰 Setup Ruby
+      - name: 🧶 Verify Yarn
+        run: |
+          corepack enable
+          yarn --version || npm install -g yarn
+
+      - name: 📦 Install dependencies
+        run: |
+          set -e
+          if [ -f "yarn.lock" ]; then
+            echo "🧶 Detected yarn.lock – using Yarn"
+            yarn install --frozen-lockfile
+          elif [ -f "package-lock.json" ]; then
+            echo "📦 Detected package-lock.json – using npm"
+            npm ci
+          else
+            echo "⚠️ No lockfile found, running fallback install"
+            yarn install || npm install
+          fi
+
+      - name: 💎 Setup Ruby
         uses: ruby/setup-ruby@v1
         with:
           ruby-version: "3.3"
           bundler-cache: true
 
-      - name: 📦 Install JS dependencies
-        shell: bash
+      - name: 🔐 Import Apple distribution certificate
         run: |
-          set -euxo pipefail
-          corepack enable
-          yarn install --frozen-lockfile || yarn install
+          CERT_PATH="$RUNNER_TEMP/dist.p12"
+          echo "$IOS_DIST_CERT_BASE64" | base64 --decode > "$CERT_PATH"
+          KEYCHAIN_PATH="$RUNNER_TEMP/build.keychain-db"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERT_PATH" -P "$IOS_DIST_CERT_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
 
-      - name: 🧱 Verify system versions
+      - name: 🚀 Build and upload to TestFlight via Fastlane
         run: |
-          echo "Node $(node -v)"
-          echo "Ruby $(ruby -v)"
-          echo "Xcode version:"
-          xcodebuild -version
-          echo "SDKs:"
-          xcodebuild -showsdks | head -n 20
-
-      - name: 🚀 Build + Upload TestFlight (Fastlane)
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo "Running Fastlane iOS CI..."
+          export RCT_NEW_ARCH_ENABLED=1
           bundle exec fastlane ios ios_ci
