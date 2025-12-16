@@ -39,49 +39,131 @@ jobs:
       XCODE_SCHEME: JunoNative
       CONFIGURATION: Release
 
-      # Optional: if you want to pin node
+      # Node
       NODE_VERSION: "22"
 
     steps:
       - name: 🧾 Checkout code
         uses: actions/checkout@v4
 
+      # Avoid ${{ runner.temp }} entirely; compute paths from $RUNNER_TEMP
       - name: Compute build paths
-        id: paths
         shell: bash
         run: |
           set -euo pipefail
-          echo "export_options_plist=$RUNNER_TEMP/ExportOptions.plist" >> "$GITHUB_OUTPUT"
-          echo "archive_path=$RUNNER_TEMP/JunoNative.xcarchive" >> "$GITHUB_OUTPUT"
-          echo "archive_info_plist=$RUNNER_TEMP/JunoNative.xcarchive/Info.plist" >> "$GITHUB_OUTPUT"
-          echo "export_dir=$RUNNER_TEMP/build" >> "$GITHUB_OUTPUT"
+          echo "EXPORT_OPTIONS_PLIST=$RUNNER_TEMP/ExportOptions.plist" >> "$GITHUB_ENV"
+          echo "ARCHIVE_PATH=$RUNNER_TEMP/JunoNative.xcarchive" >> "$GITHUB_ENV"
+          echo "ARCHIVE_INFO_PLIST=$RUNNER_TEMP/JunoNative.xcarchive/Info.plist" >> "$GITHUB_ENV"
+          echo "EXPORT_DIR=$RUNNER_TEMP/build" >> "$GITHUB_ENV"
+          echo "ASC_DIR=$RUNNER_TEMP/asc" >> "$GITHUB_ENV"
+          echo "ASC_API_KEY_JSON=$RUNNER_TEMP/api_key.json" >> "$GITHUB_ENV"
+
+      - name: 🧠 Detect JS package manager (Option B)
+        id: pm
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f "yarn.lock" ]; then
+            echo "manager=yarn" >> "$GITHUB_OUTPUT"
+            echo "lock=yarn.lock" >> "$GITHUB_OUTPUT"
+          elif [ -f "package-lock.json" ]; then
+            echo "manager=npm" >> "$GITHUB_OUTPUT"
+            echo "lock=package-lock.json" >> "$GITHUB_OUTPUT"
+          elif [ -f "pnpm-lock.yaml" ]; then
+            echo "manager=pnpm" >> "$GITHUB_OUTPUT"
+            echo "lock=pnpm-lock.yaml" >> "$GITHUB_OUTPUT"
+          else
+            # Last-resort: don’t hard-fail the workflow here; we’ll do a non-frozen install.
+            echo "manager=yarn" >> "$GITHUB_OUTPUT"
+            echo "lock=" >> "$GITHUB_OUTPUT"
+          fi
+
+          echo "Detected package manager: $(cat "$GITHUB_OUTPUT" | grep manager | cut -d= -f2)"
 
       - name: 🟩 Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: "yarn"
+          # Option B: NO cache here, because setup-node hard-fails when the lock file isn't present.
 
-      - name: 📦 Install JS deps
+      - name: 📦 Install JS deps (lockfile-aware)
         shell: bash
         run: |
           set -euo pipefail
-          corepack enable
-          yarn --version
-          yarn install --frozen-lockfile
+
+          corepack enable || true
+
+          case "${{ steps.pm.outputs.manager }}" in
+            yarn)
+              echo "Using Yarn..."
+              yarn --version
+              if [ -f "yarn.lock" ]; then
+                yarn install --frozen-lockfile
+              else
+                echo "⚠️ No yarn.lock found; running non-frozen install (commit yarn.lock for deterministic builds)."
+                yarn install
+              fi
+              ;;
+            npm)
+              echo "Using npm..."
+              node --version
+              npm --version
+              npm ci
+              ;;
+            pnpm)
+              echo "Using pnpm..."
+              pnpm --version || corepack prepare pnpm@latest --activate
+              pnpm install --frozen-lockfile
+              ;;
+            *)
+              echo "Unknown package manager selection."
+              exit 1
+              ;;
+          esac
+
+      - name: 💎 Detect Ruby strategy (Bundler vs gem install)
+        id: ruby
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f "Gemfile" ]; then
+            echo "use_bundler=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "use_bundler=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: 💎 Setup Ruby (Bundler cache)
+        if: ${{ steps.ruby.outputs.use_bundler == 'true' }}
         uses: ruby/setup-ruby@v1
         with:
           ruby-version: "3.2"
           bundler-cache: true
+
+      - name: 💎 Setup Ruby (no Gemfile) + install required gems
+        if: ${{ steps.ruby.outputs.use_bundler != 'true' }}
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.2"
+
+      - name: 💎 Install fastlane/cocoapods/xcpretty (no Gemfile)
+        if: ${{ steps.ruby.outputs.use_bundler != 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gem install fastlane -N
+          gem install cocoapods -N
+          gem install xcpretty -N
 
       - name: 🧰 Install CocoaPods
         shell: bash
         run: |
           set -euo pipefail
           cd ios
-          bundle exec pod install --repo-update
+          if [ "${{ steps.ruby.outputs.use_bundler }}" = "true" ]; then
+            bundle exec pod install --repo-update
+          else
+            pod install --repo-update
+          fi
 
       - name: 🔐 Create temporary keychain
         shell: bash
@@ -94,11 +176,9 @@ jobs:
           security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 
-          # Make it the default for this job
           security list-keychains -d user -s "$KEYCHAIN_PATH"
           security default-keychain -s "$KEYCHAIN_PATH"
 
-          # Allow codesign to access the keychain non-interactively
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 
           echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
@@ -127,7 +207,6 @@ jobs:
           PP_FILE="$RUNNER_TEMP/profile.mobileprovision"
           echo "$IOS_APPSTORE_PROFILE_BASE64" | base64 --decode > "$PP_FILE"
 
-          # Extract UUID so Xcode can find it
           UUID=$(/usr/bin/security cms -D -i "$PP_FILE" | /usr/libexec/PlistBuddy -c 'Print:UUID' /dev/stdin)
           cp "$PP_FILE" "$PP_DIR/$UUID.mobileprovision"
 
@@ -137,8 +216,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/asc"
-          API_KEY_PATH="$RUNNER_TEMP/asc/AuthKey_${APP_STORE_CONNECT_API_KEY_ID}.p8"
+          mkdir -p "$ASC_DIR"
+          API_KEY_PATH="$ASC_DIR/AuthKey_${APP_STORE_CONNECT_API_KEY_ID}.p8"
           echo "$APP_STORE_CONNECT_API_KEY_BASE64" | base64 --decode > "$API_KEY_PATH"
           chmod 600 "$API_KEY_PATH"
           echo "ASC_API_KEY_PATH=$API_KEY_PATH" >> "$GITHUB_ENV"
@@ -147,19 +226,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
-          ARCHIVE_PATH="$RUNNER_TEMP/JunoNative.xcarchive"
-
-          # Ensure deterministic build output
           rm -rf "$ARCHIVE_PATH"
 
+          # NOTE: if your project needs specific signing settings, keep them in Xcode.
           xcodebuild \
             -workspace "$XCODE_WORKSPACE" \
             -scheme "$XCODE_SCHEME" \
             -configuration "$CONFIGURATION" \
             -sdk iphoneos \
             -archivePath "$ARCHIVE_PATH" \
-            -allowProvisioningUpdates \
             -destination "generic/platform=iOS" \
             DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
             PRODUCT_BUNDLE_IDENTIFIER="$APP_IDENTIFIER" \
@@ -172,9 +247,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          EXPORT_PLIST="$RUNNER_TEMP/ExportOptions.plist"
-
-          cat > "$EXPORT_PLIST" << 'PLIST'
+          cat > "$EXPORT_OPTIONS_PLIST" << PLIST
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
@@ -200,18 +273,12 @@ jobs:
           </plist>
           PLIST
 
-          test -f "$EXPORT_PLIST"
-          plutil -lint "$EXPORT_PLIST"
+          plutil -lint "$EXPORT_OPTIONS_PLIST"
 
       - name: 📤 Export IPA (xcodebuild -exportArchive)
         shell: bash
         run: |
           set -euo pipefail
-
-          ARCHIVE_PATH="$RUNNER_TEMP/JunoNative.xcarchive"
-          EXPORT_DIR="$RUNNER_TEMP/build"
-          EXPORT_PLIST="$RUNNER_TEMP/ExportOptions.plist"
-
           rm -rf "$EXPORT_DIR"
           mkdir -p "$EXPORT_DIR"
 
@@ -219,7 +286,7 @@ jobs:
             -exportArchive \
             -archivePath "$ARCHIVE_PATH" \
             -exportPath "$EXPORT_DIR" \
-            -exportOptionsPlist "$EXPORT_PLIST" | xcpretty
+            -exportOptionsPlist "$EXPORT_OPTIONS_PLIST" | xcpretty
 
           ls -la "$EXPORT_DIR"
           IPA_COUNT=$(find "$EXPORT_DIR" -maxdepth 1 -name "*.ipa" | wc -l | tr -d ' ')
@@ -235,11 +302,10 @@ jobs:
         run: |
           set -euo pipefail
 
-          EXPORT_DIR="$RUNNER_TEMP/build"
           IPA_PATH=$(find "$EXPORT_DIR" -maxdepth 1 -name "*.ipa" | head -n 1)
 
-          # Build the API key JSON for fastlane from the decoded p8 path
-          cat > "$RUNNER_TEMP/api_key.json" << JSON
+          # Create fastlane api_key.json
+          cat > "$ASC_API_KEY_JSON" << JSON
           {
             "key_id": "${APP_STORE_CONNECT_API_KEY_ID}",
             "issuer_id": "${APP_STORE_CONNECT_API_KEY_ISSUER_ID}",
@@ -248,11 +314,19 @@ jobs:
           }
           JSON
 
-          bundle exec fastlane run pilot \
-            api_key_path:"$RUNNER_TEMP/api_key.json" \
-            ipa:"$IPA_PATH" \
-            skip_waiting_for_build_processing:true \
-            changelog:"$RELEASE_NOTES"
+          if [ "${{ steps.ruby.outputs.use_bundler }}" = "true" ]; then
+            bundle exec fastlane pilot upload \
+              --api_key_path "$ASC_API_KEY_JSON" \
+              --ipa "$IPA_PATH" \
+              --skip_waiting_for_build_processing true \
+              --changelog "$RELEASE_NOTES"
+          else
+            fastlane pilot upload \
+              --api_key_path "$ASC_API_KEY_JSON" \
+              --ipa "$IPA_PATH" \
+              --skip_waiting_for_build_processing true \
+              --changelog "$RELEASE_NOTES"
+          fi
 
       - name: 📎 Upload build artifacts
         if: always()
@@ -260,10 +334,10 @@ jobs:
         with:
           name: ios-build-artifacts
           path: |
-            ${{ steps.paths.outputs.export_options_plist }}
-            ${{ steps.paths.outputs.archive_info_plist }}
-            ${{ steps.paths.outputs.archive_path }}
-            ${{ steps.paths.outputs.export_dir }}
+            ${{ env.EXPORT_OPTIONS_PLIST }}
+            ${{ env.ARCHIVE_INFO_PLIST }}
+            ${{ env.ARCHIVE_PATH }}
+            ${{ env.EXPORT_DIR }}
 
       - name: 🧹 Cleanup keychain
         if: always()
