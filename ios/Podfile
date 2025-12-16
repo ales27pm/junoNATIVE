@@ -1,13 +1,10 @@
 platform :ios, '15.1'
 source 'https://cdn.cocoapods.org/'
 
-root_path         = File.expand_path('..', __dir__)
+root_path = File.expand_path('..', __dir__)
 node_modules_path = File.expand_path('../node_modules', __dir__)
 
-unless File.directory?(node_modules_path)
-  Pod::UI.puts 'React Native dependencies not found. Run `npm ci` before installing pods.'
-  raise Pod::Informative, "Missing node_modules at #{node_modules_path}"
-end
+raise Pod::Informative, 'Missing node_modules. Run npm ci first.' unless File.directory?(node_modules_path)
 
 require File.join(node_modules_path, 'react-native/scripts/react_native_pods')
 require File.join(node_modules_path, '@react-native-community/cli-platform-ios/native_modules')
@@ -18,31 +15,38 @@ target 'JunoNative' do
   config = use_native_modules!
 
   use_react_native!(
-    path:           config[:reactNativePath],
+    path: config[:reactNativePath],
     hermes_enabled: true,
     fabric_enabled: true,
-    app_path:       root_path
+    app_path: root_path
   )
 
   post_install do |installer|
     react_native_post_install(installer)
 
-    # 🔒 HARD GUARANTEE: Pods never install into archive
-    installer.pods_project.targets.each do |t|
-      t.build_configurations.each do |c|
-        c.build_settings['SKIP_INSTALL'] = 'YES'
-        c.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.1'
+    installer.pods_project.targets.each do |target|
+      target.build_configurations.each do |cfg|
+        # Enforce deployment target consistency
+        cfg.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.1'
+
+        # Enforce modern C++
+        cfg.build_settings['CLANG_CXX_LANGUAGE_STANDARD'] = 'c++20'
+        cfg.build_settings['CLANG_CXX_LIBRARY'] = 'libc++'
       end
     end
 
-    # 🔑 CRITICAL: App target must install
+    # 🔴 CRITICAL FIX — DO NOT REMOVE
     installer.aggregate_targets.each do |aggregate|
       aggregate.user_project.targets.each do |t|
         next unless t.name == 'JunoNative'
 
-        t.build_configurations.each do |c|
-          c.build_settings['SKIP_INSTALL'] = 'NO'
-          c.build_settings['INSTALL_PATH'] = '$(LOCAL_APPS_DIR)'
+        t.build_configurations.each do |cfg|
+          flags = cfg.build_settings['OTHER_LDFLAGS'] || []
+          flags = [flags] unless flags.is_a?(Array)
+
+          unless flags.include?('$(inherited)')
+            cfg.build_settings['OTHER_LDFLAGS'] = ['$(inherited)'] + flags
+          end
         end
       end
     end
