@@ -2,8 +2,7 @@ name: iOS CI & Native Artifact Release
 
 on:
   push:
-    branches:
-      - main
+    branches: [ main ]
     tags:
       - "ios-v*"
   workflow_dispatch:
@@ -13,39 +12,41 @@ jobs:
     runs-on: macos-14
 
     env:
-      CI: true
+      CI: "1"
       BUNDLE_PATH: vendor/bundle
 
-      # New Architecture everywhere (pods + xcodebuild)
-      RCT_NEW_ARCH_ENABLED: "1"
-
-      # App & team identifiers
-      APPLE_ID: ${{ secrets.APPLE_ID }}
+      # --- Identifiers ---
       APP_IDENTIFIER: ${{ secrets.APP_IDENTIFIER }}
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
-      # App Store Connect API key
+      # --- App Store Connect API key ---
       APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
       APP_STORE_CONNECT_API_KEY_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ISSUER_ID }}
       APP_STORE_CONNECT_API_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_API_KEY_BASE64 }}
 
-      # Provisioning profile (support both names)
-      IOS_PROFILE_BASE64: ${{ secrets.IOS_PROFILE_BASE64 }}
-      IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROFILE_BASE64 }}
-
-      # Distribution certificate (support both names)
+      # --- Signing assets (Fastlane reads these) ---
       IOS_DIST_CERT_BASE64: ${{ secrets.IOS_DIST_CERT_BASE64 }}
-      IOS_CERT_P12_BASE64: ${{ secrets.IOS_DIST_CERT_BASE64 }}
-
       IOS_DIST_CERT_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
-      IOS_CERT_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
+      IOS_PROFILE_BASE64: ${{ secrets.IOS_PROFILE_BASE64 }}
 
-      # Optional. If you don't set this secret, Fastlane uses a safe default.
-      MATCH_KEYCHAIN_PASSWORD: ${{ secrets.MATCH_KEYCHAIN_PASSWORD }}
+      # Optional but recommended (Fastlane falls back if missing)
+      KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+
+      # If you want RN new-arch pods on CI
+      RCT_NEW_ARCH_ENABLED: "1"
 
     steps:
-      - name: 🧾 Checkout code
+      - name: 🧾 Checkout
         uses: actions/checkout@v4
+
+      - name: 🧩 Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: 📦 Install JS deps
+        run: npm ci
 
       - name: 💎 Setup Ruby
         uses: ruby/setup-ruby@v1
@@ -53,28 +54,8 @@ jobs:
           ruby-version: "3.3"
           bundler-cache: true
 
-      - name: 🧩 Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: 📦 Install JS dependencies
-        run: npm ci
-
-      - name: 📚 Install Ruby gems
+      - name: 📚 Install gems
         run: bundle install --jobs 4 --retry 3
 
-      - name: 🚀 Build & upload via Fastlane
+      - name: 🚀 Build + Upload (Fastlane)
         run: bundle exec fastlane ios ios_ci
-
-      # Optional: keep artifacts for debugging even if upload fails
-      - name: 📎 Upload build artifacts
-        if: ${{ always() }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: ios-build
-          path: |
-            fastlane/build/ios
-            **/*.xcdistributionlogs
-          if-no-files-found: ignore
