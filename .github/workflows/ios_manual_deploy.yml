@@ -1,4 +1,4 @@
-name: iOS Manual Build & TestFlight
+name: iOS Manual Build & TestFlight (No Match)
 
 on:
   push:
@@ -15,27 +15,98 @@ jobs:
       IOS_DIST_CERT_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
       IOS_PROFILE_BASE64: ${{ secrets.IOS_PROFILE_BASE64 }}
       KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+
       APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
       APP_STORE_CONNECT_API_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_API_ISSUER_ID }}
       APP_STORE_CONNECT_API_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_API_KEY_BASE64 }}
+
       APP_IDENTIFIER: ${{ secrets.APP_IDENTIFIER }}
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+      IOS_SCHEME: JunoNative
+      IOS_WORKSPACE: ios/JunoNative.xcworkspace
+      XCODEGEN_SPEC: ios/JunoNativeApp.yml
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install dependencies (brew, xcodegen, cocoapods)
-        run: |
-          brew update
-          brew install xcodegen cocoapods
-
-      - name: Install JavaScript and iOS dependencies
+      - name: Print runner/tool versions
+        shell: bash
         run: |
           set -euo pipefail
-          corepack enable
-          yarn install --frozen-lockfile || npm ci
-          cd ios && pod install
+          sw_vers || true
+          xcodebuild -version
+          xcode-select -p
+          ruby -v || true
+          node -v || true
+          npm -v || true
+          yarn -v || true
+          python3 -V || true
+
+      - name: Install dependencies (xcodegen, cocoapods)
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
+          brew list cocoapods >/dev/null 2>&1 || brew install cocoapods
+          xcodegen --version
+          pod --version
+
+      - name: Install JavaScript dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable || true
+          if [ -f yarn.lock ]; then
+            yarn install --frozen-lockfile
+          elif [ -f package-lock.json ]; then
+            npm ci
+          else
+            echo "::error::No yarn.lock or package-lock.json found"
+            exit 1
+          fi
+
+      - name: Ensure XcodeGen source dir exists (workaround for missing ios/JunoNativeApp)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -d "ios/JunoNativeApp" ]; then
+            if [ -d "ios/JunoNative" ]; then
+              echo "::notice::ios/JunoNativeApp missing. Copying from ios/JunoNative -> ios/JunoNativeApp"
+              rsync -a "ios/JunoNative/" "ios/JunoNativeApp/"
+            else
+              echo "::error::ios/JunoNativeApp missing AND ios/JunoNative not found. Cannot satisfy XcodeGen spec."
+              ls -la ios || true
+              exit 1
+            fi
+          fi
+          ls -la ios
+
+      - name: Generate Xcode project (XcodeGen)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -f "${XCODEGEN_SPEC}" ]; then
+            echo "::error::XcodeGen spec not found: ${XCODEGEN_SPEC}"
+            ls -la ios || true
+            exit 1
+          fi
+          xcodegen generate --spec "${XCODEGEN_SPEC}"
+
+      - name: Install CocoaPods (creates/updates workspace)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd ios
+          pod repo update
+          pod install --verbose
+          cd ..
+          if [ ! -f "${IOS_WORKSPACE}" ]; then
+            echo "::error::Workspace not found after pod install: ${IOS_WORKSPACE}"
+            find ios -maxdepth 2 -type f -name "*.xcworkspace" -print || true
+            exit 1
+          fi
 
       - name: Decode signing assets and create keychain
         shell: bash
@@ -46,22 +117,12 @@ jobs:
           PROFILE_PATH="$RUNNER_TEMP/profile.mobileprovision"
           KEYCHAIN_PATH="$RUNNER_TEMP/app-signing.keychain-db"
 
-          if [[ -z "${IOS_DIST_CERT_BASE64:-}" ]]; then
-            echo "::error::IOS_DIST_CERT_BASE64 secret is empty"
-            exit 1
-          fi
-          if [[ -z "${IOS_PROFILE_BASE64:-}" ]]; then
-            echo "::error::IOS_PROFILE_BASE64 secret is empty"
-            exit 1
-          fi
-          if [[ -z "${KEYCHAIN_PASSWORD:-}" ]]; then
-            echo "::error::KEYCHAIN_PASSWORD secret is empty"
-            exit 1
-          fi
-          if [[ -z "${IOS_DIST_CERT_PASSWORD:-}" ]]; then
-            echo "::error::IOS_DIST_CERT_PASSWORD secret is empty"
-            exit 1
-          fi
+          for v in IOS_DIST_CERT_BASE64 IOS_PROFILE_BASE64 KEYCHAIN_PASSWORD IOS_DIST_CERT_PASSWORD APPLE_TEAM_ID APP_IDENTIFIER; do
+            if [[ -z "${!v:-}" ]]; then
+              echo "::error::Secret/env $v is empty"
+              exit 1
+            fi
+          done
 
           # base64 decode (GNU and BSD variants)
           echo -n "$IOS_DIST_CERT_BASE64" | base64 --decode > "$CERT_PATH" 2>/dev/null || \
@@ -76,9 +137,13 @@ jobs:
 
           security import "$CERT_PATH" -P "$IOS_DIST_CERT_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
           security list-keychain -d user -s "$KEYCHAIN_PATH"
+          security default-keychain -s "$KEYCHAIN_PATH"
 
           # Allow codesign to access the key without UI prompts
           security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
+          echo "::notice::Keychain created at $KEYCHAIN_PATH"
 
       - name: Install provisioning profile (extract name/uuid)
         shell: bash
@@ -97,9 +162,10 @@ jobs:
           cp "$PROFILE_PATH" "$HOME/Library/MobileDevice/Provisioning Profiles/$PROFILE_UUID.mobileprovision"
 
           echo "PROFILE_NAME=$PROFILE_NAME" >> "$GITHUB_ENV"
+          echo "PROFILE_UUID=$PROFILE_UUID" >> "$GITHUB_ENV"
           echo "::notice::Installed provisioning profile: $PROFILE_NAME ($PROFILE_UUID)"
 
-      - name: Create ExportOptions.plist
+      - name: Create ExportOptions.plist (manual signing)
         shell: bash
         run: |
           set -euo pipefail
@@ -112,85 +178,156 @@ jobs:
           fi
 
           cat > "$EXPORT_PLIST" <<PLIST
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-            <key>method</key>
-            <string>app-store</string>
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>method</key>
+  <string>app-store</string>
 
-            <key>teamID</key>
-            <string>${APPLE_TEAM_ID}</string>
+  <key>teamID</key>
+  <string>${APPLE_TEAM_ID}</string>
 
-            <key>signingStyle</key>
-            <string>manual</string>
+  <key>signingStyle</key>
+  <string>manual</string>
 
-            <key>provisioningProfiles</key>
-            <dict>
-              <key>${APP_IDENTIFIER}</key>
-              <string>${PROFILE_NAME}</string>
-            </dict>
-          </dict>
-          </plist>
-          PLIST
+  <key>provisioningProfiles</key>
+  <dict>
+    <key>${APP_IDENTIFIER}</key>
+    <string>${PROFILE_NAME}</string>
+  </dict>
+</dict>
+</plist>
+PLIST
 
           plutil -lint "$EXPORT_PLIST"
+          echo "EXPORT_PLIST=$EXPORT_PLIST" >> "$GITHUB_ENV"
           echo "::notice::ExportOptions.plist ready at $EXPORT_PLIST"
 
-      - name: Ensure XcodeGen source dir exists
+      - name: Build archive (MUST be an app archive)
         shell: bash
         run: |
           set -euo pipefail
-          if [ ! -d "ios/JunoNativeApp" ]; then
-            echo "ios/JunoNativeApp missing. Creating it from ios/JunoNative..."
-            cp -R "ios/JunoNative" "ios/JunoNativeApp"
-          fi
-          ls -la ios
+          ARCHIVE_PATH="$RUNNER_TEMP/JunoNative.xcarchive"
 
-      - name: Generate Xcode project
-        run: |
-          xcodegen generate --spec ios/JunoNativeApp.yml
+          echo "::group::xcodebuild -list"
+          xcodebuild -list -workspace "${IOS_WORKSPACE}"
+          echo "::endgroup::"
 
-      - name: Build archive
+          # BUILD_DOCUMENTATION_DURING_BUILD=NO avoids certain “generic archive / Other Items” issues when docs get archived.
+          xcodebuild \
+            -workspace "${IOS_WORKSPACE}" \
+            -scheme "${IOS_SCHEME}" \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination "generic/platform=iOS" \
+            -archivePath "$ARCHIVE_PATH" \
+            BUILD_DOCUMENTATION_DURING_BUILD=NO \
+            OTHER_CODE_SIGN_FLAGS="--keychain ${KEYCHAIN_PATH}" \
+            clean archive
+
+          echo "ARCHIVE_PATH=$ARCHIVE_PATH" >> "$GITHUB_ENV"
+          echo "::notice::Archive created at $ARCHIVE_PATH"
+
+      - name: Validate archive is exportable (exactly one .app)
+        shell: bash
         run: |
           set -euo pipefail
-          ARCHIVE_PATH="$RUNNER_TEMP/JunoNative.xcarchive"
-          xcodebuild -workspace ios/JunoNative.xcworkspace \
-                     -scheme JunoNative \
-                     -sdk iphoneos \
-                     -configuration Release \
-                     -allowProvisioningUpdates \
-                     -archivePath "$ARCHIVE_PATH" \
-                     clean archive
+          ARCHIVE_PATH="$ARCHIVE_PATH"
+
+          echo "::group::Archive Info.plist"
+          plutil -p "$ARCHIVE_PATH/Info.plist" || true
+          echo "::endgroup::"
+
+          if [ ! -d "$ARCHIVE_PATH/Products/Applications" ]; then
+            echo "::error::Archive has no Products/Applications. This is not an app archive (likely generic/framework archive)."
+            find "$ARCHIVE_PATH/Products" -maxdepth 4 -print || true
+            exit 1
+          fi
+
+          echo "::group::Products/Applications"
+          ls -la "$ARCHIVE_PATH/Products/Applications" || true
+          echo "::endgroup::"
+
+          mapfile -t APPS < <(find "$ARCHIVE_PATH/Products/Applications" -maxdepth 1 -name "*.app" -print)
+          if [ "${#APPS[@]}" -ne 1 ]; then
+            echo "::error::Expected exactly 1 .app in Products/Applications, found ${#APPS[@]}."
+            echo "::error::This usually means your scheme is archiving extra targets (libraries/bundles) or Skip Install is wrong."
+            echo "::error::Fix: set Skip Install = YES for all non-app targets; keep main app target Skip Install = NO; ensure scheme archives the app only."
+            find "$ARCHIVE_PATH/Products/Applications" -maxdepth 2 -print || true
+            exit 1
+          fi
+
+          echo "APP_PATH=${APPS[0]}" >> "$GITHUB_ENV"
+          echo "::notice::App in archive: ${APPS[0]}"
 
       - name: Export IPA
+        shell: bash
         run: |
           set -euo pipefail
-          EXPORT_PLIST="$RUNNER_TEMP/ExportOptions.plist"
-          xcodebuild -exportArchive -archivePath "$RUNNER_TEMP/JunoNative.xcarchive" \
-                     -exportOptionsPlist "$EXPORT_PLIST" \
-                     -exportPath "$RUNNER_TEMP/build"
+          EXPORT_PATH="$RUNNER_TEMP/build"
 
-      - name: Upload to TestFlight
+          xcodebuild -exportArchive \
+            -archivePath "$ARCHIVE_PATH" \
+            -exportOptionsPlist "$EXPORT_PLIST" \
+            -exportPath "$EXPORT_PATH"
+
+          echo "EXPORT_PATH=$EXPORT_PATH" >> "$GITHUB_ENV"
+          echo "::notice::Exported to $EXPORT_PATH"
+
+      - name: Upload to TestFlight (fastlane pilot + API key)
+        shell: bash
         run: |
           set -euo pipefail
-          IPA_PATH=$(find "$RUNNER_TEMP/build" -name "*.ipa" | head -n 1)
+
+          for v in APP_STORE_CONNECT_API_KEY_ID APP_STORE_CONNECT_API_ISSUER_ID APP_STORE_CONNECT_API_KEY_BASE64; do
+            if [[ -z "${!v:-}" ]]; then
+              echo "::error::Secret/env $v is empty"
+              exit 1
+            fi
+          done
+
+          IPA_PATH="$(find "$EXPORT_PATH" -maxdepth 3 -name "*.ipa" | head -n 1)"
           if [[ -z "${IPA_PATH:-}" || ! -f "$IPA_PATH" ]]; then
-            echo "::error::IPA not found under $RUNNER_TEMP/build"
-            find "$RUNNER_TEMP/build" -maxdepth 3 -type f -print || true
+            echo "::error::IPA not found under $EXPORT_PATH"
+            find "$EXPORT_PATH" -maxdepth 4 -type f -print || true
             exit 1
           fi
 
-          AUTHKEY_PATH="$RUNNER_TEMP/AuthKey_$APP_STORE_CONNECT_API_KEY_ID.p8"
-          if [[ -z "${APP_STORE_CONNECT_API_KEY_BASE64:-}" ]]; then
-            echo "::error::APP_STORE_CONNECT_API_KEY_BASE64 secret is empty"
-            exit 1
-          fi
+          AUTHKEY_PATH="$RUNNER_TEMP/AuthKey_${APP_STORE_CONNECT_API_KEY_ID}.p8"
           echo -n "$APP_STORE_CONNECT_API_KEY_BASE64" | base64 --decode > "$AUTHKEY_PATH" 2>/dev/null || \
           echo -n "$APP_STORE_CONNECT_API_KEY_BASE64" | base64 -D > "$AUTHKEY_PATH"
 
-          xcrun altool --validate-app -f "$IPA_PATH" -t ios \
-             --apiKey "$APP_STORE_CONNECT_API_KEY_ID" --apiIssuer "$APP_STORE_CONNECT_API_ISSUER_ID"
+          API_KEY_JSON="$RUNNER_TEMP/appstore_api_key.json"
+          python3 - <<PY
+import json, pathlib, os
+key_text = pathlib.Path(os.environ["AUTHKEY_PATH"]).read_text()
+data = {
+  "key_id": os.environ["APP_STORE_CONNECT_API_KEY_ID"],
+  "issuer_id": os.environ["APP_STORE_CONNECT_API_ISSUER_ID"],
+  "key": key_text,
+  "in_house": False
+}
+pathlib.Path(os.environ["API_KEY_JSON"]).write_text(json.dumps(data))
+PY
 
-          xcrun altool --upload-app -f "$IPA_PATH" -t ios \
-             --apiKey "$APP_STORE_CONNECT_API_KEY_ID" --apiIssuer "$APP_STORE_CONNECT_API_ISSUER_ID"
+          if ! command -v fastlane >/dev/null 2>&1; then
+            gem install fastlane -N
+          fi
+
+          fastlane pilot upload \
+            --ipa "$IPA_PATH" \
+            --api_key_path "$API_KEY_JSON" \
+            --skip_waiting_for_build_processing true
+
+      - name: Upload debug artifacts (always)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-build-debug
+          path: |
+            ${{ runner.temp }}/ExportOptions.plist
+            ${{ runner.temp }}/JunoNative.xcarchive/Info.plist
+            ${{ runner.temp }}/JunoNative.xcarchive
+            ${{ runner.temp }}/build
+          if-no-files-found: warn
