@@ -1,4 +1,4 @@
-name: iOS CI & Native Artifact Release
+name: iOS CI & TestFlight
 
 on:
   push:
@@ -10,52 +10,62 @@ on:
 jobs:
   build-and-release-ios:
     runs-on: macos-14
+    timeout-minutes: 60
 
     env:
-      CI: "1"
-      BUNDLE_PATH: vendor/bundle
+      CI: "true"
 
-      # --- Identifiers ---
+      # App identity
       APP_IDENTIFIER: ${{ secrets.APP_IDENTIFIER }}
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
-      # --- App Store Connect API key ---
+      # App Store Connect API key (either base64 OR raw)
       APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
-      APP_STORE_CONNECT_API_KEY_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ISSUER_ID }}
+      APP_STORE_CONNECT_API_KEY_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_API_ISSUER_ID }}
       APP_STORE_CONNECT_API_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_API_KEY_BASE64 }}
+      APP_STORE_CONNECT_API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
 
-      # --- Signing assets (Fastlane reads these) ---
+      # Signing assets
       IOS_DIST_CERT_BASE64: ${{ secrets.IOS_DIST_CERT_BASE64 }}
       IOS_DIST_CERT_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
       IOS_PROFILE_BASE64: ${{ secrets.IOS_PROFILE_BASE64 }}
 
-      # Optional but recommended (Fastlane falls back if missing)
-      KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+      # Optional (fastlane uses fallback if empty)
+      MATCH_KEYCHAIN_PASSWORD: ${{ secrets.MATCH_KEYCHAIN_PASSWORD }}
 
-      # If you want RN new-arch pods on CI
+      # Build outputs
+      IOS_OUTPUT_NAME: JunoNative.ipa
+
+      # Force RN New Architecture everywhere
       RCT_NEW_ARCH_ENABLED: "1"
 
     steps:
       - name: 🧾 Checkout
         uses: actions/checkout@v4
 
-      - name: 🧩 Setup Node
+      - name: 🧰 Setup Node (22)
         uses: actions/setup-node@v4
         with:
-          node-version: 22
-          cache: npm
+          node-version: "22"
+          cache: "yarn"
 
-      - name: 📦 Install JS deps
-        run: npm ci
-
-      - name: 💎 Setup Ruby
+      - name: 🧰 Setup Ruby (3.3)
         uses: ruby/setup-ruby@v1
         with:
           ruby-version: "3.3"
           bundler-cache: true
 
-      - name: 📚 Install gems
-        run: bundle install --jobs 4 --retry 3
+      - name: 📦 Install JS deps
+        run: |
+          corepack enable
+          yarn --version
+          yarn install --frozen-lockfile
 
-      - name: 🚀 Build + Upload (Fastlane)
-        run: bundle exec fastlane ios ios_ci
+      - name: 🧱 Install native build deps
+        run: |
+          brew update
+          brew install cmake || true
+
+      - name: 🚀 Fastlane iOS CI → TestFlight
+        run: |
+          bundle exec fastlane ios ios_ci
