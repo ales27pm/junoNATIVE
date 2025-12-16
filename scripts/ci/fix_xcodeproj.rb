@@ -1,108 +1,114 @@
-# scripts/ci/fix_xcodeproj.rb
-# Patches the iOS project so Archive includes a real .app (not a generic archive / empty Applications folder).
+#!/usr/bin/env ruby
+# frozen_string_literal: true
 
 require "xcodeproj"
+require "fileutils"
 
-root      = File.expand_path("../..", __dir__)
-proj_path = File.join(root, "ios", "JunoNative.xcodeproj")
-pbxproj   = File.join(proj_path, "project.pbxproj")
+ROOT_DIR = File.expand_path("../..", __dir__)
+IOS_PROJ = File.join(ROOT_DIR, "ios", "JunoNative.xcodeproj")
 
-unless File.exist?(pbxproj)
-  warn "❌ Missing #{pbxproj}"
+expected_bundle = ENV["APP_IDENTIFIER"].to_s
+expected_team   = ENV["APPLE_TEAM_ID"].to_s
+preferred_name  = ENV["IOS_APP_TARGET"].to_s # optional override
+
+unless File.exist?(IOS_PROJ)
+  warn "❌ Xcode project not found: #{IOS_PROJ}"
   exit 1
 end
 
-bundle_id   = ENV["APP_IDENTIFIER"].to_s
-target_name = ENV["IOS_APP_TARGET"].to_s
-target_name = "JunoNative" if target_name.empty?
+project = Xcodeproj::Project.open(IOS_PROJ)
 
-project = Xcodeproj::Project.open(proj_path)
-targets = project.targets
+def app_like_target?(t, expected_bundle)
+  return false unless t.isa == "PBXNativeTarget"
 
-if targets.empty?
-  warn "❌ No targets found in #{proj_path}"
-  exit 1
-end
+  cfgs = t.build_configurations
+  return false if cfgs.nil? || cfgs.empty?
 
-puts "🔎 Targets seen: #{targets.map(&:name).join(', ')}"
+  settings = cfgs.map(&:build_settings)
 
-# Heuristic selection:
-# 1) exact name match
-# 2) bundle id match
-# 3) fallback: anything that looks like the app (not Pods-*)
-candidates = targets.select { |t| t.name == target_name }
-
-if candidates.empty? && !bundle_id.empty?
-  candidates = targets.select do |t|
-    t.build_configurations.any? do |cfg|
-      cfg.build_settings["PRODUCT_BUNDLE_IDENTIFIER"].to_s == bundle_id
-    end
+  # Strong signals for an iOS .app:
+  wrapper_app = settings.any? { |s| s["WRAPPER_EXTENSION"].to_s == "app" }
+  product_type_app = t.respond_to?(:product_type) && t.product_type.to_s.include?("application")
+  sdk_ios = settings.any? do |s|
+    s["SDKROOT"].to_s.include?("iphoneos") ||
+      s["SDKROOT"].to_s.include?("iphone") ||
+      s["PLATFORM_NAME"].to_s == "iphoneos"
   end
+
+  bundle_ok =
+    expected_bundle.to_s.empty? ||
+    settings.any? { |s| s["PRODUCT_BUNDLE_IDENTIFIER"].to_s == expected_bundle } ||
+    # if bundle id is set via config vars, don't block detection
+    settings.any? { |s| s["PRODUCT_BUNDLE_IDENTIFIER"].to_s.include?("$(") }
+
+  # Many RN app targets don’t explicitly set SDKROOT; rely on wrapper/product_type too.
+  (wrapper_app || product_type_app) && bundle_ok && (sdk_ios || wrapper_app || product_type_app)
+end
+
+candidates = project.targets.select { |t| app_like_target?(t, expected_bundle) }
+
+# If detection is too strict, fallback: look for target matching name “JunoNative”
+if candidates.empty?
+  candidates = project.targets.select { |t| t.isa == "PBXNativeTarget" && t.name.to_s == "JunoNative" }
+end
+
+if !preferred_name.empty?
+  preferred = candidates.find { |t| t.name == preferred_name }
+  candidates = [preferred].compact if preferred
 end
 
 if candidates.empty?
-  candidates = targets.select do |t|
-    t.is_a?(Xcodeproj::Project::Object::PBXNativeTarget) &&
-      !t.name.start_with?("Pods-") &&
-      t.name.downcase.include?("juno")
-  end
-end
-
-if candidates.empty?
-  warn "❌ No candidate targets found to patch in #{proj_path}."
-  warn "   If this project truly has no iOS app target, it will always archive as generic."
+  warn "❌ No iOS application targets found in #{IOS_PROJ}."
+  warn "   Targets seen: #{project.targets.map(&:name).join(', ')}"
   exit 1
 end
 
-def patch_cfg!(cfg, bundle_id:)
+target = candidates.first
+puts "✅ Using target: #{target.name}"
+
+changed = false
+
+target.build_configurations.each do |cfg|
+  # Archive uses Release by default; patch Release + anything Release-like
   name = cfg.name.to_s
-  bs   = cfg.build_settings
+  next unless name.match?(/Release|Archive|AppStore|Production/i) || name == "Debug" # safe: Debug doesn't affect export
 
-  # If bundle id is missing, set it (helps when project is half-generated)
-  if !bundle_id.to_s.empty? && bs["PRODUCT_BUNDLE_IDENTIFIER"].to_s.strip.empty?
-    puts "  • #{name}: PRODUCT_BUNDLE_IDENTIFIER => #{bundle_id}"
-    bs["PRODUCT_BUNDLE_IDENTIFIER"] = bundle_id
-  end
+  bs = cfg.build_settings
 
-  # The big one: if SKIP_INSTALL=YES, archive Applications folder can be empty.
-  # Set it to NO on Release-like configs.
-  if name =~ /(release|archive|appstore|production)/i
-    puts "  • #{name}: SKIP_INSTALL => NO"
+  # The classic “generic archive / no .app” fix
+  if bs["SKIP_INSTALL"].to_s != "NO"
     bs["SKIP_INSTALL"] = "NO"
+    changed = true
+    puts "  - #{cfg.name}: SKIP_INSTALL=NO"
+  end
+
+  if bs["INSTALL_PATH"].to_s.empty? || bs["INSTALL_PATH"].to_s == "$(LOCAL_APPS_DIR)"
     bs["INSTALL_PATH"] = "/Applications"
+    changed = true
+    puts "  - #{cfg.name}: INSTALL_PATH=/Applications"
   end
 
-  # Stabilise CI output a bit
-  bs["ONLY_ACTIVE_ARCH"] = "NO"  if bs["ONLY_ACTIVE_ARCH"].to_s.empty?
-  bs["DEAD_CODE_STRIPPING"] = "YES" if bs["DEAD_CODE_STRIPPING"].to_s.empty?
-end
+  # Optional: set team id if not already set (won’t override if present)
+  if !expected_team.empty? && bs["DEVELOPMENT_TEAM"].to_s.empty?
+    bs["DEVELOPMENT_TEAM"] = expected_team
+    changed = true
+    puts "  - #{cfg.name}: DEVELOPMENT_TEAM=#{expected_team}"
+  end
 
-candidates.each do |t|
-  puts "🛠  Patching target: #{t.name} (#{t.class})"
-
-  # If it smells like an app (has Info.plist / bundle id) but product_type is wrong, force it.
-  begin
-    has_plist  = t.build_configurations.any? { |cfg| cfg.build_settings["INFOPLIST_FILE"].to_s.strip != "" }
-    has_bundle = t.build_configurations.any? { |cfg| cfg.build_settings["PRODUCT_BUNDLE_IDENTIFIER"].to_s.strip != "" } ||
-                 (!bundle_id.empty?)
-
-    if t.respond_to?(:product_type) && (t.product_type.to_s.empty? || (!t.product_type.to_s.include?("application") && has_plist && has_bundle))
-      puts "  • Setting product_type => com.apple.product-type.application (was: #{t.product_type})"
-      t.product_type = "com.apple.product-type.application"
+  # Optional: align bundle id ONLY if it's a literal (don’t break variable-based setups)
+  if !expected_bundle.empty?
+    cur = bs["PRODUCT_BUNDLE_IDENTIFIER"].to_s
+    if !cur.empty? && !cur.include?("$(") && cur != expected_bundle
+      bs["PRODUCT_BUNDLE_IDENTIFIER"] = expected_bundle
+      changed = true
+      puts "  - #{cfg.name}: PRODUCT_BUNDLE_IDENTIFIER=#{expected_bundle}"
     end
-  rescue => e
-    warn "  ⚠️ Could not adjust product_type for #{t.name}: #{e}"
-  end
-
-  t.build_configurations.each do |cfg|
-    patch_cfg!(cfg, bundle_id: bundle_id)
   end
 end
 
-# Also patch project-level build configurations as a safety net
-project.build_configurations.each do |cfg|
-  patch_cfg!(cfg, bundle_id: bundle_id)
+if changed
+  project.save
+  puts "✅ Project patched and saved."
+else
+  puts "ℹ️ No project changes required."
 end
-
-project.save
-puts "✅ Saved patched project: #{proj_path}"
