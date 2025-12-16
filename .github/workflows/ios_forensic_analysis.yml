@@ -143,7 +143,6 @@ jobs:
             PLIST=$(echo "$SETTINGS" | awk -F' = ' '/^ *INFOPLIST_FILE/ {print $2; exit}')
             LDFLAGS=$(echo "$SETTINGS" | awk -F' = ' '/^ *OTHER_LDFLAGS/ {print $2; exit}')
 
-            # CSV-escape commas by replacing with semicolons (good enough for forensics)
             PT=${PT//,/;}
             BID=${BID//,/;}
             SKIP=${SKIP//,/;}
@@ -166,13 +165,17 @@ jobs:
           COUNT=$(grep -c "com.apple.product-type.application" matrix.csv || true)
           echo "Found $COUNT application target(s)" | tee -a app_targets.txt
 
-          # Don't fail yet — we also check schemes below (sometimes schemes differ from raw targets)
-
-      - name: 🧠 Find an application scheme (workspace schemes)
+      # ✅ NEW: scan schemes and reject anything that is not an iOS application
+      - name: 🧠 Find an iOS application scheme (workspace schemes)
         id: pick
         shell: bash
         run: |
           set -euo pipefail
+
+          echo "### DESTINATIONS (workspace)" | tee destinations.txt
+          xcodebuild -showdestinations \
+            -workspace "${XCODE_WORKSPACE}" \
+            -scheme "JunoNative" 2>&1 | tee -a destinations.txt || true
 
           SCHEMES=$(xcodebuild -list -workspace "${XCODE_WORKSPACE}" | awk '
             $0 ~ /^Schemes:/ {in_s=1; next}
@@ -187,25 +190,72 @@ jobs:
 
           PICKED=""
           for S in $SCHEMES; do
-            PT=$(xcodebuild -showBuildSettings \
+            echo "Checking scheme: $S" | tee -a schemes_scanned.txt
+
+            SETTINGS=$(xcodebuild -showBuildSettings \
               -workspace "${XCODE_WORKSPACE}" \
               -scheme "$S" \
-              -configuration "${CONFIGURATION}" 2>/dev/null | awk -F' = ' '/^ *PRODUCT_TYPE/ {print $2; exit}' || true)
+              -configuration "${CONFIGURATION}" 2>/dev/null || true)
 
-            if [ "$PT" = "com.apple.product-type.application" ]; then
-              PICKED="$S"
-              break
+            PT=$(echo "$SETTINGS" | awk -F' = ' '/^ *PRODUCT_TYPE/ {print $2; exit}')
+            SDK=$(echo "$SETTINGS" | awk -F' = ' '/^ *SDKROOT/ {print $2; exit}')
+            SUPPORTS_MACCAT=$(echo "$SETTINGS" | awk -F' = ' '/^ *SUPPORTS_MACCATALYST/ {print $2; exit}')
+            SKIP=$(echo "$SETTINGS" | awk -F' = ' '/^ *SKIP_INSTALL/ {print $2; exit}')
+
+            echo "  PRODUCT_TYPE=$PT SDKROOT=$SDK SUPPORTS_MACCATALYST=$SUPPORTS_MACCAT SKIP_INSTALL=$SKIP" | tee -a schemes_scanned.txt
+
+            # Must be an app
+            if [ "$PT" != "com.apple.product-type.application" ]; then
+              continue
             fi
+
+            # Must be iphoneos (not macos/catalyst-only)
+            if [ "$SDK" != "iphoneos" ] && [ "$SDK" != "iphoneos18.0" ] && [ "$SDK" != "iphoneos18.1" ]; then
+              # SDKROOT often resolves to "iphoneos" or "iphoneosXX.X" depending on Xcode
+              # This check allows both styles but rejects macos/maccatalyst
+              case "$SDK" in
+                iphoneos* ) ;;
+                * ) continue ;;
+              esac
+            fi
+
+            # Must not be skip-install YES (apps should be NO)
+            if [ "$SKIP" = "YES" ]; then
+              continue
+            fi
+
+            PICKED="$S"
+            break
           done
 
-          echo "SCHEMES=$SCHEMES" | tee schemes_scanned.txt
+          echo "SCHEMES=$SCHEMES" | tee schemes_all.txt
           echo "PICKED_SCHEME=$PICKED" | tee picked_scheme.txt
-
           echo "picked_scheme=$PICKED" >> "$GITHUB_OUTPUT"
 
           if [ -z "$PICKED" ]; then
-            echo "❌ No application scheme found in workspace."
-            echo "This means your 'JunoNative' scheme/target is not an app (likely a static lib)."
+            echo "❌ No iOS application scheme found in workspace."
+            echo "This usually means your scheme 'JunoNative' points at a static library / framework target."
+            exit 2
+          fi
+
+      # ✅ NEW: hard assertion for the chosen scheme
+      - name: 🔒 Assert picked scheme is an application
+        shell: bash
+        run: |
+          set -euo pipefail
+          SCHEME="${{ steps.pick.outputs.picked_scheme }}"
+
+          SETTINGS=$(xcodebuild \
+            -workspace "${XCODE_WORKSPACE}" \
+            -scheme "$SCHEME" \
+            -configuration "${CONFIGURATION}" \
+            -showBuildSettings)
+
+          PT=$(echo "$SETTINGS" | awk -F' = ' '/^ *PRODUCT_TYPE/ {print $2; exit}')
+          echo "PRODUCT_TYPE=$PT" | tee scheme_product_type.txt
+
+          if [ "$PT" != "com.apple.product-type.application" ]; then
+            echo "❌ Picked scheme '$SCHEME' is not an application."
             exit 2
           fi
 
@@ -246,7 +296,13 @@ jobs:
             exit 2
           fi
 
-          echo "✅ Apps found:" | tee -a archive_attempt.txt
+          APP_PATH=$(find "$ARCHIVE_PATH/Products/Applications" -maxdepth 1 -name "*.app" -print -quit || true)
+          if [ -z "$APP_PATH" ]; then
+            echo "❌ Products/Applications exists but contains no .app => Still a bad archive" | tee -a archive_attempt.txt
+            exit 2
+          fi
+
+          echo "✅ App found: $APP_PATH" | tee -a archive_attempt.txt
           ls -la "$ARCHIVE_PATH/Products/Applications" | tee -a archive_attempt.txt
 
       - name: 📎 Upload forensic artifacts
@@ -260,8 +316,11 @@ jobs:
             matrix.csv
             matrix.txt
             app_targets.txt
+            schemes_all.txt
             schemes_scanned.txt
             picked_scheme.txt
+            scheme_product_type.txt
+            destinations.txt
             archive_attempt.txt
             archive_tree.txt
             xcodebuild_archive_raw.log
