@@ -1,3 +1,7 @@
+---
+File: /.github/workflows/ios_manual_deploy.yml
+---
+
 name: iOS Manual Deploy (App Store Connect / TestFlight)
 
 on:
@@ -162,6 +166,17 @@ jobs:
           set -euo pipefail
           gem install fastlane -N
           gem install cocoapods -N
+      
+      - name: 🛠️ Patch iOS Project (Static Lib -> App)
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Patching Xcode project to build an Application instead of a Static Library..."
+          if [ "${{ steps.ruby.outputs.use_bundler }}" = "true" ]; then
+            bundle exec ruby scripts/ci/fix_ios_project.rb
+          else
+            ruby scripts/ci/fix_ios_project.rb
+          fi
 
       - name: 🧰 Install CocoaPods (with fallback)
         shell: bash
