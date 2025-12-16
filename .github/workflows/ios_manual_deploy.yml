@@ -93,7 +93,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          corepack enable || true
+          corepack enable |
+
+| true
 
           case "${{ steps.pm.outputs.manager }}" in
             yarn)
@@ -118,7 +120,9 @@ jobs:
               ;;
             pnpm)
               echo "Using pnpm..."
-              pnpm --version || corepack prepare pnpm@latest --activate
+              pnpm --version |
+
+| corepack prepare pnpm@latest --activate
               if [ -f "pnpm-lock.yaml" ]; then
                 pnpm install --frozen-lockfile
               else
@@ -150,29 +154,18 @@ jobs:
           bundler-cache: true
 
       - name: 💎 Setup Ruby (no Gemfile)
-        if: ${{ steps.ruby.outputs.use_bundler != 'true' }}
+        if: ${{ steps.ruby.outputs.use_bundler!= 'true' }}
         uses: ruby/setup-ruby@v1
         with:
           ruby-version: "3.2"
 
       - name: 💎 Install fastlane/cocoapods (no Gemfile)
-        if: ${{ steps.ruby.outputs.use_bundler != 'true' }}
+        if: ${{ steps.ruby.outputs.use_bundler!= 'true' }}
         shell: bash
         run: |
           set -euo pipefail
           gem install fastlane -N
           gem install cocoapods -N
-      
-      - name: 🛠️ Patch iOS Project (Static Lib -> App)
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo "Patching Xcode project to build an Application instead of a Static Library..."
-          if [ "${{ steps.ruby.outputs.use_bundler }}" = "true" ]; then
-            bundle exec ruby scripts/ci/fix_ios_project.rb
-          else
-            ruby scripts/ci/fix_ios_project.rb
-          fi
 
       - name: 🧰 Install CocoaPods (with fallback)
         shell: bash
@@ -199,17 +192,78 @@ jobs:
           if [ "${{ steps.ruby.outputs.use_bundler }}" = "true" ]; then
             if bundle exec ruby -S xcpretty --version >/dev/null 2>&1; then
               echo "XCPRETTY_CMD=bundle exec xcpretty" >> "$GITHUB_ENV"
-              bundle exec ruby -S xcpretty --version || true
+              bundle exec ruby -S xcpretty --version |
+
+| true
               exit 0
             fi
           fi
 
-          if ! command -v xcpretty >/dev/null 2>&1; then
+          if! command -v xcpretty >/dev/null 2>&1; then
             gem install xcpretty -N
           fi
 
-          xcpretty --version || true
+          xcpretty --version |
+
+| true
           echo "XCPRETTY_CMD=xcpretty" >> "$GITHUB_ENV"
+
+      - name: ⚙️ Enforce SKIP_INSTALL Settings (Critical Fix)
+        # Fixes the Generic Archive error by explicitly setting installation status
+        # on the main app target and dependencies, which prevents the distribution failure.
+        shell: bash
+        run: |
+          set -euo pipefail
+          
+          if [ "${{ steps.ruby.outputs.use_bundler }}" = "true" ]; then
+            RUBY_CMD="bundle exec"
+          else
+            RUBY_CMD=""
+            # Need xcodeproj gem to modify project files
+            gem install xcodeproj -N |
+
+| true
+          fi
+
+          $RUBY_CMD ruby -e '
+          require "xcodeproj"
+          
+          # Open the main application project
+          project_path = "ios/JunoNative.xcodeproj"
+          proj = Xcodeproj::Project.open(project_path)
+          
+          # Target 1: The main application executable (JunoNative)
+          main_target = proj.targets.find { |t| t.name == "JunoNative" }
+          
+          if main_target
+            # Must set SKIP_INSTALL = NO so the.app gets archived correctly.
+            main_target.build_configurations.each do |config|
+              puts "Setting SKIP_INSTALL=NO for JunoNative in #{config.name}."
+              config.build_settings = "NO"
+            end
+          else
+            puts "Warning: JunoNative main target not found."
+          end
+
+          # Target 2: The CocoaPods dependencies project
+          pods_project_path = "ios/Pods/Pods.xcodeproj"
+          if File.exist?(pods_project_path)
+            pods_proj = Xcodeproj::Project.open(pods_project_path)
+            
+            # Must set SKIP_INSTALL = YES for all dependency targets (like libs and frameworks)
+            # This ensures they are embedded but not separately installed in the archive root.
+            pods_proj.targets.each do |target|
+              target.build_configurations.each do |config|
+                puts "Setting SKIP_INSTALL=YES for Pod dependency target #{target.name} in #{config.name}."
+                config.build_settings = "YES"
+              end
+            end
+            pods_proj.save
+          end
+          
+          proj.save
+          puts "✅ Project files updated with correct SKIP_INSTALL settings."
+          '
 
       - name: 🔐 Create temporary keychain
         shell: bash
@@ -233,11 +287,11 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [ -z "${IOS_DIST_CERT_BASE64:-}" ]; then
+          if; then
             echo "IOS_DIST_CERT_BASE64 is empty. Set it in GitHub Secrets."
             exit 1
           fi
-          if [ -z "${IOS_DIST_CERT_PASSWORD:-}" ]; then
+          if; then
             echo "IOS_DIST_CERT_PASSWORD is empty. Set it in GitHub Secrets."
             exit 1
           fi
@@ -254,7 +308,7 @@ jobs:
           except Exception as e:
             print("Invalid base64 in IOS_DIST_CERT_BASE64:", e)
             sys.exit(2)
-          out = os.environ["CERT_P12"]
+          out = os.environ
           with open(out, "wb") as f:
             f.write(data)
           print("p12 bytes:", len(data))
@@ -273,7 +327,7 @@ jobs:
           echo "Available signing identities:"
           security find-identity -v -p codesigning "$KEYCHAIN_PATH"
 
-          if ! security find-identity -v -p codesigning "$KEYCHAIN_PATH" | grep -qE "\) "; then
+          if! security find-identity -v -p codesigning "$KEYCHAIN_PATH" | grep -qE "\) "; then
             echo "No codesigning identity found in keychain after import."
             exit 1
           fi
@@ -283,7 +337,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [ -z "${IOS_PROFILE_BASE64:-}" ]; then
+          if; then
             echo "IOS_PROFILE_BASE64 is empty. Set it in GitHub Secrets."
             exit 1
           fi
@@ -328,11 +382,11 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [ -z "${APP_STORE_CONNECT_API_KEY_BASE64:-}" ]; then
+          if; then
             echo "APP_STORE_CONNECT_API_KEY_BASE64 is empty. Set it in GitHub Secrets."
             exit 1
           fi
-          if [ -z "${APP_STORE_CONNECT_API_KEY_ID:-}" ] || [ -z "${APP_STORE_CONNECT_API_KEY_ISSUER_ID:-}" ]; then
+          if ||; then
             echo "APP_STORE_CONNECT_API_KEY_ID / APP_STORE_CONNECT_API_KEY_ISSUER_ID missing."
             exit 1
           fi
@@ -350,12 +404,12 @@ jobs:
           except Exception as e:
             print("Invalid base64 in APP_STORE_CONNECT_API_KEY_BASE64:", e)
             sys.exit(2)
-          out = os.environ["ASC_P8_PATH"]
+          out = os.environ
           with open(out, "wb") as f:
             f.write(data)
           print("p8 bytes:", len(data))
           if len(data) < 100:
-            print("Decoded .p8 key is suspiciously small (<100 bytes).")
+            print("Decoded.p8 key is suspiciously small (<100 bytes).")
             sys.exit(3)
           PY
 
@@ -369,7 +423,7 @@ jobs:
           rm -rf "$ARCHIVE_PATH"
 
           set +o pipefail
-          if [ -n "${XCPRETTY_CMD:-}" ]; then
+          if; then
             xcodebuild \
               -workspace "$XCODE_WORKSPACE" \
               -scheme "$XCODE_SCHEME" \
@@ -379,7 +433,7 @@ jobs:
               -destination "generic/platform=iOS" \
               DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
               archive 2>&1 | tee "$XCODEBUILD_ARCHIVE_LOG" | eval "$XCPRETTY_CMD"
-            XC=${PIPESTATUS[0]}
+            XC=${PIPESTATUS}
           else
             xcodebuild \
               -workspace "$XCODE_WORKSPACE" \
@@ -390,11 +444,11 @@ jobs:
               -destination "generic/platform=iOS" \
               DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
               archive 2>&1 | tee "$XCODEBUILD_ARCHIVE_LOG"
-            XC=${PIPESTATUS[0]}
+            XC=${PIPESTATUS}
           fi
           set -o pipefail
 
-          if [ "${XC:-1}" -eq 0 ] && [ ! -d "$ARCHIVE_PATH" ]; then
+          if [ "${XC:-1}" -eq 0 ] &&; then
             echo "Archive directory missing at $ARCHIVE_PATH"
             exit 1
           fi
@@ -408,21 +462,18 @@ jobs:
           python3 - <<'PY'
           import os, plistlib
 
-          # FIX: Simplified and reordered the dictionary keys. This fixes the 'expected one {}' error 
-          # which is often a parser bug related to optional keys like 'manageAppVersionAndBuildNumber' 
-          # on newer Xcode versions (16+).
+          # Minimalist ExportOptions to prevent Xcode 16 plist parsing errors
           export_options = {
             "method": "app-store",
-            "teamID": os.environ["APPLE_TEAM_ID"],
+            "teamID": os.environ,
             "signingStyle": "manual",
             "provisioningProfiles": {
-              os.environ["APP_IDENTIFIER"]: os.environ["PROFILE_NAME"]
+              os.environ: os.environ
             },
             "uploadSymbols": True,
-            # Removed optional/deprecated keys for robustness: compileBitcode, uploadBitcode, stripSwiftSymbols, manageAppVersionAndBuildNumber
           }
 
-          with open(os.environ["EXPORT_OPTIONS_PLIST"], "wb") as f:
+          with open(os.environ, "wb") as f:
             plistlib.dump(export_options, f)
           PY
 
@@ -435,7 +486,7 @@ jobs:
           rm -rf "$EXPORT_DIR"
           mkdir -p "$EXPORT_DIR"
 
-          # FIX (from previous attempt): Explicitly pass code signing arguments to prevent "Unknown Distribution Error" (Code=2).
+          # FIX: Explicitly pass code signing arguments and set up command execution with eval
           XCODE_EXPORT_OVERRIDES='CODE_SIGN_IDENTITY="Apple Distribution" CODE_SIGN_STYLE=Manual'
 
           # Get command for xcpretty
@@ -446,14 +497,14 @@ jobs:
 
           set +o pipefail
           # The use of 'eval' here is to correctly execute the pipe for xcpretty/tee when conditionally included.
-          if [ -n "${XCPRETTY_COMMAND}" ]; then
+          if; then
             # Run with xcpretty
             eval "$XCODEBUILD_CMD 2>&1 | tee \"$XCODEBUILD_EXPORT_LOG\" | $XCPRETTY_COMMAND"
-            XC=${PIPESTATUS[0]}
+            XC=${PIPESTATUS}
           else
             # Run without xcpretty
             eval "$XCODEBUILD_CMD 2>&1 | tee \"$XCODEBUILD_EXPORT_LOG\""
-            XC=${PIPESTATUS[0]}
+            XC=${PIPESTATUS}
           fi
           set -o pipefail
 
@@ -476,15 +527,15 @@ jobs:
 
           python3 - <<'PY'
           import os, json
-          with open(os.environ["ASC_API_KEY_PATH"], "r", encoding="utf-8") as f:
+          with open(os.environ, "r", encoding="utf-8") as f:
             key = f.read()
           payload = {
-            "key_id": os.environ["APP_STORE_CONNECT_API_KEY_ID"],
-            "issuer_id": os.environ["APP_STORE_CONNECT_API_KEY_ISSUER_ID"],
+            "key_id": os.environ,
+            "issuer_id": os.environ,
             "key": key,
             "in_house": False
           }
-          with open(os.environ["ASC_API_KEY_JSON"], "w", encoding="utf-8") as f:
+          with open(os.environ, "w", encoding="utf-8") as f:
             json.dump(payload, f)
           PY
 
@@ -521,6 +572,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [ -n "${KEYCHAIN_PATH:-}" ] && [ -f "$KEYCHAIN_PATH" ]; then
-            security delete-keychain "$KEYCHAIN_PATH" || true
+          if &&; then
+            security delete-keychain "$KEYCHAIN_PATH" |
+
+| true
           fi
