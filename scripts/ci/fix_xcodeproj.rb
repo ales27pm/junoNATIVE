@@ -1,114 +1,105 @@
 #!/usr/bin/env ruby
-# frozen_string_literal: true
+# ------------------------------------------------------------
+# fix_xcodeproj.rb
+#
+# Safely normalizes build settings for the iOS APPLICATION
+# target after conversion from static library.
+#
+# - No scheme manipulation
+# - No assumptions about phases
+# - CI-safe
+# ------------------------------------------------------------
 
 require "xcodeproj"
-require "fileutils"
 
-ROOT_DIR = File.expand_path("../..", __dir__)
-IOS_PROJ = File.join(ROOT_DIR, "ios", "JunoNative.xcodeproj")
+PROJECT_PATH = "ios/JunoNative.xcodeproj"
 
-expected_bundle = ENV["APP_IDENTIFIER"].to_s
-expected_team   = ENV["APPLE_TEAM_ID"].to_s
-preferred_name  = ENV["IOS_APP_TARGET"].to_s # optional override
-
-unless File.exist?(IOS_PROJ)
-  warn "❌ Xcode project not found: #{IOS_PROJ}"
-  exit 1
+unless File.exist?(PROJECT_PATH)
+  abort "❌ Xcode project not found at #{PROJECT_PATH}"
 end
 
-project = Xcodeproj::Project.open(IOS_PROJ)
+project = Xcodeproj::Project.open(PROJECT_PATH)
 
-def app_like_target?(t, expected_bundle)
-  return false unless t.isa == "PBXNativeTarget"
-
-  cfgs = t.build_configurations
-  return false if cfgs.nil? || cfgs.empty?
-
-  settings = cfgs.map(&:build_settings)
-
-  # Strong signals for an iOS .app:
-  wrapper_app = settings.any? { |s| s["WRAPPER_EXTENSION"].to_s == "app" }
-  product_type_app = t.respond_to?(:product_type) && t.product_type.to_s.include?("application")
-  sdk_ios = settings.any? do |s|
-    s["SDKROOT"].to_s.include?("iphoneos") ||
-      s["SDKROOT"].to_s.include?("iphone") ||
-      s["PLATFORM_NAME"].to_s == "iphoneos"
-  end
-
-  bundle_ok =
-    expected_bundle.to_s.empty? ||
-    settings.any? { |s| s["PRODUCT_BUNDLE_IDENTIFIER"].to_s == expected_bundle } ||
-    # if bundle id is set via config vars, don't block detection
-    settings.any? { |s| s["PRODUCT_BUNDLE_IDENTIFIER"].to_s.include?("$(") }
-
-  # Many RN app targets don’t explicitly set SDKROOT; rely on wrapper/product_type too.
-  (wrapper_app || product_type_app) && bundle_ok && (sdk_ios || wrapper_app || product_type_app)
+# ------------------------------------------------------------
+# Find application target
+# ------------------------------------------------------------
+target = project.targets.find do |t|
+  t.product_type == "com.apple.product-type.application"
 end
 
-candidates = project.targets.select { |t| app_like_target?(t, expected_bundle) }
-
-# If detection is too strict, fallback: look for target matching name “JunoNative”
-if candidates.empty?
-  candidates = project.targets.select { |t| t.isa == "PBXNativeTarget" && t.name.to_s == "JunoNative" }
+unless target
+  abort "❌ No application target found. Did fix_ios_project.rb run?"
 end
 
-if !preferred_name.empty?
-  preferred = candidates.find { |t| t.name == preferred_name }
-  candidates = [preferred].compact if preferred
+puts "✅ Fixing build settings for target: #{target.name}"
+
+# ------------------------------------------------------------
+# Normalize build settings
+# ------------------------------------------------------------
+target.build_configurations.each do |config|
+  s = config.build_settings
+
+  # --- Core App Settings ---
+  s["SKIP_INSTALL"] = "NO"
+  s["APPLICATION_EXTENSION_API_ONLY"] = "NO"
+
+  # --- React Native / New Architecture ---
+  s["CLANG_CXX_LANGUAGE_STANDARD"] = "c++17"
+  s["CLANG_CXX_LIBRARY"] = "libc++"
+  s["OTHER_CPLUSPLUSFLAGS"] ||= ["$(inherited)", "-std=c++17"]
+
+  # --- Linking ---
+  s["LD_RUNPATH_SEARCH_PATHS"] ||= ["$(inherited)", "@executable_path/Frameworks"]
+
+  # --- Disable Bitcode (required for RN + C++ DSP) ---
+  s["ENABLE_BITCODE"] = "NO"
+
+  # --- Ensure Info.plist ---
+  s["INFOPLIST_FILE"] ||= "JunoNative/Info.plist"
+
+  # --- Avoid CI signing conflicts ---
+  s["CODE_SIGN_STYLE"] ||= "Manual"
+  s["CODE_SIGNING_ALLOWED"] ||= "NO"
+  s["CODE_SIGNING_REQUIRED"] ||= "NO"
+
+  # --- Swift compatibility ---
+  s["SWIFT_VERSION"] ||= "5.0"
+
+  # --- Header Search Paths (safe append) ---
+  header_paths = s["HEADER_SEARCH_PATHS"] || ["$(inherited)"]
+  header_paths = [header_paths] if header_paths.is_a?(String)
+
+  header_paths << "$(SRCROOT)/../rtn-juno-engine/cpp"
+  header_paths << "$(SRCROOT)/../rtn-juno-engine/cpp/engine"
+  header_paths << "$(SRCROOT)/../rtn-juno-engine/cpp/dsp"
+
+  s["HEADER_SEARCH_PATHS"] = header_paths.uniq
+
+  # --- Framework Search Paths ---
+  framework_paths = s["FRAMEWORK_SEARCH_PATHS"] || ["$(inherited)"]
+  framework_paths = [framework_paths] if framework_paths.is_a?(String)
+  s["FRAMEWORK_SEARCH_PATHS"] = framework_paths.uniq
 end
 
-if candidates.empty?
-  warn "❌ No iOS application targets found in #{IOS_PROJ}."
-  warn "   Targets seen: #{project.targets.map(&:name).join(', ')}"
-  exit 1
+# ------------------------------------------------------------
+# Ensure "Bundle React Native code and images" phase exists
+# ------------------------------------------------------------
+bundle_phase_name = "Bundle React Native code and images"
+
+bundle_phase =
+  target.shell_script_build_phases.find { |p| p.name == bundle_phase_name }
+
+unless bundle_phase
+  bundle_phase = target.new_shell_script_build_phase(bundle_phase_name)
+  bundle_phase.shell_script = <<~SCRIPT
+    export NODE_BINARY=node
+    ../node_modules/react-native/scripts/react-native-xcode.sh
+  SCRIPT
+  puts "➕ Added React Native bundle phase"
 end
 
-target = candidates.first
-puts "✅ Using target: #{target.name}"
-
-changed = false
-
-target.build_configurations.each do |cfg|
-  # Archive uses Release by default; patch Release + anything Release-like
-  name = cfg.name.to_s
-  next unless name.match?(/Release|Archive|AppStore|Production/i) || name == "Debug" # safe: Debug doesn't affect export
-
-  bs = cfg.build_settings
-
-  # The classic “generic archive / no .app” fix
-  if bs["SKIP_INSTALL"].to_s != "NO"
-    bs["SKIP_INSTALL"] = "NO"
-    changed = true
-    puts "  - #{cfg.name}: SKIP_INSTALL=NO"
-  end
-
-  if bs["INSTALL_PATH"].to_s.empty? || bs["INSTALL_PATH"].to_s == "$(LOCAL_APPS_DIR)"
-    bs["INSTALL_PATH"] = "/Applications"
-    changed = true
-    puts "  - #{cfg.name}: INSTALL_PATH=/Applications"
-  end
-
-  # Optional: set team id if not already set (won’t override if present)
-  if !expected_team.empty? && bs["DEVELOPMENT_TEAM"].to_s.empty?
-    bs["DEVELOPMENT_TEAM"] = expected_team
-    changed = true
-    puts "  - #{cfg.name}: DEVELOPMENT_TEAM=#{expected_team}"
-  end
-
-  # Optional: align bundle id ONLY if it's a literal (don’t break variable-based setups)
-  if !expected_bundle.empty?
-    cur = bs["PRODUCT_BUNDLE_IDENTIFIER"].to_s
-    if !cur.empty? && !cur.include?("$(") && cur != expected_bundle
-      bs["PRODUCT_BUNDLE_IDENTIFIER"] = expected_bundle
-      changed = true
-      puts "  - #{cfg.name}: PRODUCT_BUNDLE_IDENTIFIER=#{expected_bundle}"
-    end
-  end
-end
-
-if changed
-  project.save
-  puts "✅ Project patched and saved."
-else
-  puts "ℹ️ No project changes required."
-end
+# ------------------------------------------------------------
+# Save project
+# ------------------------------------------------------------
+project.save
+puts "✅ Xcode project settings normalized successfully"
