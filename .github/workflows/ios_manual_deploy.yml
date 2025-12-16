@@ -31,23 +31,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Print runner/tool versions
-        shell: bash
-        run: |
-          set -euo pipefail
-          sw_vers || true
-          xcodebuild -version
-          xcode-select -p
-          ruby -v || true
-          node -v || true
-          npm -v || true
-          yarn -v || true
-          python3 -V || true
-
       - name: Install dependencies (xcodegen, cocoapods)
         shell: bash
         run: |
           set -euo pipefail
+          brew update
           brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
           brew list cocoapods >/dev/null 2>&1 || brew install cocoapods
           xcodegen --version
@@ -124,7 +112,6 @@ jobs:
             fi
           done
 
-          # base64 decode (GNU and BSD variants)
           echo -n "$IOS_DIST_CERT_BASE64" | base64 --decode > "$CERT_PATH" 2>/dev/null || \
           echo -n "$IOS_DIST_CERT_BASE64" | base64 -D > "$CERT_PATH"
 
@@ -139,7 +126,6 @@ jobs:
           security list-keychain -d user -s "$KEYCHAIN_PATH"
           security default-keychain -s "$KEYCHAIN_PATH"
 
-          # Allow codesign to access the key without UI prompts
           security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 
           echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
@@ -165,46 +151,25 @@ jobs:
           echo "PROFILE_UUID=$PROFILE_UUID" >> "$GITHUB_ENV"
           echo "::notice::Installed provisioning profile: $PROFILE_NAME ($PROFILE_UUID)"
 
-      - name: Create ExportOptions.plist (manual signing)
+      - name: Create ExportOptions.plist (manual signing, no heredoc)
         shell: bash
         run: |
           set -euo pipefail
 
           EXPORT_PLIST="$RUNNER_TEMP/ExportOptions.plist"
-
           if [[ -z "${APPLE_TEAM_ID:-}" || -z "${APP_IDENTIFIER:-}" || -z "${PROFILE_NAME:-}" ]]; then
             echo "::error::Missing APPLE_TEAM_ID / APP_IDENTIFIER / PROFILE_NAME"
             exit 1
           fi
 
-          cat > "$EXPORT_PLIST" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>method</key>
-  <string>app-store</string>
-
-  <key>teamID</key>
-  <string>${APPLE_TEAM_ID}</string>
-
-  <key>signingStyle</key>
-  <string>manual</string>
-
-  <key>provisioningProfiles</key>
-  <dict>
-    <key>${APP_IDENTIFIER}</key>
-    <string>${PROFILE_NAME}</string>
-  </dict>
-</dict>
-</plist>
-PLIST
-
+          export EXPORT_PLIST
+          python3 -c 'import os, plistlib, pathlib; d={"method":"app-store","teamID":os.environ["APPLE_TEAM_ID"],"signingStyle":"manual","provisioningProfiles":{os.environ["APP_IDENTIFIER"]:os.environ["PROFILE_NAME"]}}; pathlib.Path(os.environ["EXPORT_PLIST"]).write_bytes(plistlib.dumps(d))'
           plutil -lint "$EXPORT_PLIST"
+
           echo "EXPORT_PLIST=$EXPORT_PLIST" >> "$GITHUB_ENV"
           echo "::notice::ExportOptions.plist ready at $EXPORT_PLIST"
 
-      - name: Build archive (MUST be an app archive)
+      - name: Build archive
         shell: bash
         run: |
           set -euo pipefail
@@ -214,7 +179,6 @@ PLIST
           xcodebuild -list -workspace "${IOS_WORKSPACE}"
           echo "::endgroup::"
 
-          # BUILD_DOCUMENTATION_DURING_BUILD=NO avoids certain “generic archive / Other Items” issues when docs get archived.
           xcodebuild \
             -workspace "${IOS_WORKSPACE}" \
             -scheme "${IOS_SCHEME}" \
@@ -229,15 +193,10 @@ PLIST
           echo "ARCHIVE_PATH=$ARCHIVE_PATH" >> "$GITHUB_ENV"
           echo "::notice::Archive created at $ARCHIVE_PATH"
 
-      - name: Validate archive is exportable (exactly one .app)
+      - name: Validate archive is exportable (must contain exactly one .app)
         shell: bash
         run: |
           set -euo pipefail
-          ARCHIVE_PATH="$ARCHIVE_PATH"
-
-          echo "::group::Archive Info.plist"
-          plutil -p "$ARCHIVE_PATH/Info.plist" || true
-          echo "::endgroup::"
 
           if [ ! -d "$ARCHIVE_PATH/Products/Applications" ]; then
             echo "::error::Archive has no Products/Applications. This is not an app archive (likely generic/framework archive)."
@@ -249,17 +208,12 @@ PLIST
           ls -la "$ARCHIVE_PATH/Products/Applications" || true
           echo "::endgroup::"
 
-          mapfile -t APPS < <(find "$ARCHIVE_PATH/Products/Applications" -maxdepth 1 -name "*.app" -print)
-          if [ "${#APPS[@]}" -ne 1 ]; then
-            echo "::error::Expected exactly 1 .app in Products/Applications, found ${#APPS[@]}."
-            echo "::error::This usually means your scheme is archiving extra targets (libraries/bundles) or Skip Install is wrong."
-            echo "::error::Fix: set Skip Install = YES for all non-app targets; keep main app target Skip Install = NO; ensure scheme archives the app only."
-            find "$ARCHIVE_PATH/Products/Applications" -maxdepth 2 -print || true
+          APPS_FOUND="$(find "$ARCHIVE_PATH/Products/Applications" -maxdepth 1 -name "*.app" | wc -l | tr -d ' ')"
+          if [ "$APPS_FOUND" != "1" ]; then
+            echo "::error::Expected exactly 1 .app in Products/Applications, found $APPS_FOUND."
+            echo "::error::This usually means your scheme archives extra targets or non-app targets have Skip Install = NO."
             exit 1
           fi
-
-          echo "APP_PATH=${APPS[0]}" >> "$GITHUB_ENV"
-          echo "::notice::App in archive: ${APPS[0]}"
 
       - name: Export IPA
         shell: bash
@@ -275,17 +229,10 @@ PLIST
           echo "EXPORT_PATH=$EXPORT_PATH" >> "$GITHUB_ENV"
           echo "::notice::Exported to $EXPORT_PATH"
 
-      - name: Upload to TestFlight (fastlane pilot + API key)
+      - name: Upload to TestFlight (fastlane pilot + API key JSON)
         shell: bash
         run: |
           set -euo pipefail
-
-          for v in APP_STORE_CONNECT_API_KEY_ID APP_STORE_CONNECT_API_ISSUER_ID APP_STORE_CONNECT_API_KEY_BASE64; do
-            if [[ -z "${!v:-}" ]]; then
-              echo "::error::Secret/env $v is empty"
-              exit 1
-            fi
-          done
 
           IPA_PATH="$(find "$EXPORT_PATH" -maxdepth 3 -name "*.ipa" | head -n 1)"
           if [[ -z "${IPA_PATH:-}" || ! -f "$IPA_PATH" ]]; then
@@ -299,17 +246,8 @@ PLIST
           echo -n "$APP_STORE_CONNECT_API_KEY_BASE64" | base64 -D > "$AUTHKEY_PATH"
 
           API_KEY_JSON="$RUNNER_TEMP/appstore_api_key.json"
-          python3 - <<PY
-import json, pathlib, os
-key_text = pathlib.Path(os.environ["AUTHKEY_PATH"]).read_text()
-data = {
-  "key_id": os.environ["APP_STORE_CONNECT_API_KEY_ID"],
-  "issuer_id": os.environ["APP_STORE_CONNECT_API_ISSUER_ID"],
-  "key": key_text,
-  "in_house": False
-}
-pathlib.Path(os.environ["API_KEY_JSON"]).write_text(json.dumps(data))
-PY
+          export AUTHKEY_PATH API_KEY_JSON
+          python3 -c 'import os, json, pathlib; key=pathlib.Path(os.environ["AUTHKEY_PATH"]).read_text(); data={"key_id":os.environ["APP_STORE_CONNECT_API_KEY_ID"],"issuer_id":os.environ["APP_STORE_CONNECT_API_ISSUER_ID"],"key":key,"in_house":False}; pathlib.Path(os.environ["API_KEY_JSON"]).write_text(json.dumps(data))'
 
           if ! command -v fastlane >/dev/null 2>&1; then
             gem install fastlane -N
