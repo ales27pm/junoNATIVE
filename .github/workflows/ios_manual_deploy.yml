@@ -1,251 +1,275 @@
-name: iOS Manual Deploy (TestFlight)
+name: iOS Manual Deploy (App Store Connect / TestFlight)
 
 on:
   workflow_dispatch:
     inputs:
-      changelog:
-        description: "Release notes (shown in TestFlight)"
+      release_notes:
+        description: "Release notes for TestFlight (optional)"
         required: false
         default: ""
 
-concurrency:
-  group: ios-testflight-${{ github.ref }}
-  cancel-in-progress: false
-
 jobs:
-  build-and-upload:
+  ios_manual_deploy:
     runs-on: macos-14
     timeout-minutes: 60
 
     env:
-      # --- Toolchain ---
-      NODE_VERSION: "22"
-      RUBY_VERSION: "3.2"
-
-      # --- iOS build settings ---
-      IOS_WORKSPACE: ios/JunoNative.xcworkspace
-      IOS_SCHEME: JunoNative
-      IOS_CONFIGURATION: Release
-
-      ARCHIVE_PATH: ${{ runner.temp }}/JunoNative.xcarchive
-      EXPORT_DIR: ${{ runner.temp }}/export
-      EXPORT_OPTIONS_PLIST: ${{ runner.temp }}/ExportOptions.plist
-
-      # --- App Store Connect API key files (generated at runtime) ---
-      ASC_KEY_P8_PATH: ${{ runner.temp }}/AuthKey.p8
-      ASC_KEY_JSON_PATH: ${{ runner.temp }}/asc_api_key.json
-
-      # --- Required secrets (mapped into env for clarity) ---
+      # --- Required secrets (set these in GitHub repo secrets) ---
+      APPLE_ID: ${{ secrets.APPLE_ID }}
       APP_IDENTIFIER: ${{ secrets.APP_IDENTIFIER }}
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
+      # App Store Connect API key (p8) as BASE64 (single-line)
       APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
       APP_STORE_CONNECT_API_KEY_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ISSUER_ID }}
-      # Base64 of the entire .p8 file contents (recommended), OR raw .p8 text
       APP_STORE_CONNECT_API_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_API_KEY_BASE64 }}
 
-      # Base64 .p12 for Apple Distribution cert + its password
+      # Distribution cert (p12) as BASE64 and password
       IOS_DIST_CERT_BASE64: ${{ secrets.IOS_DIST_CERT_BASE64 }}
       IOS_DIST_CERT_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
 
-      # The exact provisioning profile *name* in the Apple portal (ex: "match AppStore com.example.app")
-      IOS_APPSTORE_PROFILE_NAME: ${{ secrets.IOS_APPSTORE_PROFILE_NAME }}
+      # Provisioning profile (.mobileprovision) as BASE64 (App Store profile)
+      IOS_APPSTORE_PROFILE_BASE64: ${{ secrets.IOS_APPSTORE_PROFILE_BASE64 }}
+
+      # Keychain password (can be empty but better set)
+      KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+
+      # --- Build config ---
+      XCODE_WORKSPACE: ios/JunoNative.xcworkspace
+      XCODE_SCHEME: JunoNative
+      CONFIGURATION: Release
+
+      # Optional: if you want to pin node
+      NODE_VERSION: "22"
 
     steps:
-      - name: 🧾 Checkout
+      - name: 🧾 Checkout code
         uses: actions/checkout@v4
 
-      - name: 🧰 Setup Node.js (with Yarn cache)
+      - name: Compute build paths
+        id: paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "export_options_plist=$RUNNER_TEMP/ExportOptions.plist" >> "$GITHUB_OUTPUT"
+          echo "archive_path=$RUNNER_TEMP/JunoNative.xcarchive" >> "$GITHUB_OUTPUT"
+          echo "archive_info_plist=$RUNNER_TEMP/JunoNative.xcarchive/Info.plist" >> "$GITHUB_OUTPUT"
+          echo "export_dir=$RUNNER_TEMP/build" >> "$GITHUB_OUTPUT"
+
+      - name: 🟩 Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: yarn
-          cache-dependency-path: yarn.lock
+          cache: "yarn"
+
+      - name: 📦 Install JS deps
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          yarn --version
+          yarn install --frozen-lockfile
 
       - name: 💎 Setup Ruby (Bundler cache)
         uses: ruby/setup-ruby@v1
         with:
-          ruby-version: ${{ env.RUBY_VERSION }}
+          ruby-version: "3.2"
           bundler-cache: true
 
-      - name: 🧪 Print toolchain versions
-        run: |
-          set -euo pipefail
-          node -v
-          corepack --version || true
-          yarn -v || true
-          ruby -v
-          bundle -v
-          xcodebuild -version
-
-      - name: 📦 Install JS deps
-        run: |
-          set -euo pipefail
-          corepack enable || true
-
-          if [ -f ".yarnrc.yml" ]; then
-            yarn install --immutable
-          else
-            yarn install --frozen-lockfile
-          fi
-
-      - name: 🧱 CocoaPods install
+      - name: 🧰 Install CocoaPods
+        shell: bash
         run: |
           set -euo pipefail
           cd ios
-          bundle exec pod --version
           bundle exec pod install --repo-update
 
-      - name: 🔑 Write App Store Connect API key files (p8 + json)
+      - name: 🔐 Create temporary keychain
+        shell: bash
+        run: |
+          set -euo pipefail
+          KEYCHAIN_PATH="$RUNNER_TEMP/ios-build.keychain-db"
+          KEYCHAIN_PASSWORD="${KEYCHAIN_PASSWORD:-temp-pass}"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          # Make it the default for this job
+          security list-keychains -d user -s "$KEYCHAIN_PATH"
+          security default-keychain -s "$KEYCHAIN_PATH"
+
+          # Allow codesign to access the keychain non-interactively
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
+          echo "KEYCHAIN_PASSWORD=$KEYCHAIN_PASSWORD" >> "$GITHUB_ENV"
+
+      - name: 🪪 Decode and import signing certificate (p12)
+        shell: bash
+        run: |
+          set -euo pipefail
+          CERT_P12="$RUNNER_TEMP/ios_dist.p12"
+          echo "$IOS_DIST_CERT_BASE64" | base64 --decode > "$CERT_P12"
+
+          security import "$CERT_P12" \
+            -k "$KEYCHAIN_PATH" \
+            -P "$IOS_DIST_CERT_PASSWORD" \
+            -T /usr/bin/codesign \
+            -T /usr/bin/security
+
+      - name: 📄 Decode provisioning profile
+        shell: bash
+        run: |
+          set -euo pipefail
+          PP_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
+          mkdir -p "$PP_DIR"
+
+          PP_FILE="$RUNNER_TEMP/profile.mobileprovision"
+          echo "$IOS_APPSTORE_PROFILE_BASE64" | base64 --decode > "$PP_FILE"
+
+          # Extract UUID so Xcode can find it
+          UUID=$(/usr/bin/security cms -D -i "$PP_FILE" | /usr/libexec/PlistBuddy -c 'Print:UUID' /dev/stdin)
+          cp "$PP_FILE" "$PP_DIR/$UUID.mobileprovision"
+
+          echo "PROFILE_UUID=$UUID" >> "$GITHUB_ENV"
+
+      - name: 🔑 Decode App Store Connect API key (p8)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/asc"
+          API_KEY_PATH="$RUNNER_TEMP/asc/AuthKey_${APP_STORE_CONNECT_API_KEY_ID}.p8"
+          echo "$APP_STORE_CONNECT_API_KEY_BASE64" | base64 --decode > "$API_KEY_PATH"
+          chmod 600 "$API_KEY_PATH"
+          echo "ASC_API_KEY_PATH=$API_KEY_PATH" >> "$GITHUB_ENV"
+
+      - name: 🏗️ Build archive (xcodebuild archive)
+        shell: bash
         run: |
           set -euo pipefail
 
-          python3 - <<'PY'
-          import base64, json, os, sys
-          key_id = os.environ["APP_STORE_CONNECT_API_KEY_ID"]
-          issuer = os.environ["APP_STORE_CONNECT_API_KEY_ISSUER_ID"]
-          raw = os.environ["APP_STORE_CONNECT_API_KEY_BASE64"]
-          p8_path = os.environ["ASC_KEY_P8_PATH"]
-          json_path = os.environ["ASC_KEY_JSON_PATH"]
+          ARCHIVE_PATH="$RUNNER_TEMP/JunoNative.xcarchive"
 
-          # Accept either base64(.p8) or raw .p8 content.
-          data = raw.strip().encode("utf-8")
-          decoded = None
-          try:
-            decoded = base64.b64decode(data, validate=True)
-            if b"BEGIN PRIVATE KEY" not in decoded:
-              decoded = None
-          except Exception:
-            decoded = None
+          # Ensure deterministic build output
+          rm -rf "$ARCHIVE_PATH"
 
-          if decoded is None:
-            decoded = data
+          xcodebuild \
+            -workspace "$XCODE_WORKSPACE" \
+            -scheme "$XCODE_SCHEME" \
+            -configuration "$CONFIGURATION" \
+            -sdk iphoneos \
+            -archivePath "$ARCHIVE_PATH" \
+            -allowProvisioningUpdates \
+            -destination "generic/platform=iOS" \
+            DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
+            PRODUCT_BUNDLE_IDENTIFIER="$APP_IDENTIFIER" \
+            archive | xcpretty
 
-          with open(p8_path, "wb") as f:
-            f.write(decoded)
+          test -d "$ARCHIVE_PATH"
 
-          payload = {
-            "key_id": key_id,
-            "issuer_id": issuer,
-            "key_filepath": p8_path
-          }
-          with open(json_path, "w", encoding="utf-8") as f:
-            json.dump(payload, f)
-
-          print(f"Wrote ASC p8:   {p8_path}")
-          print(f"Wrote ASC json: {json_path}")
-          PY
-
-      - name: 🔐 Import Apple Distribution certificate (.p12)
-        uses: apple-actions/import-codesign-certs@v3
-        with:
-          p12-file-base64: ${{ env.IOS_DIST_CERT_BASE64 }}
-          p12-password: ${{ env.IOS_DIST_CERT_PASSWORD }}
-
-      - name: ✅ Verify codesign identities
-        run: |
-          set -euo pipefail
-          security find-identity -p codesigning -v || true
-
-      - name: 📥 Install provisioning profile (via fastlane sigh)
+      - name: 🧾 Create ExportOptions.plist (App Store)
+        shell: bash
         run: |
           set -euo pipefail
 
-          # sigh supports api_key_path and can install the profile (skip_install=false) :contentReference[oaicite:2]{index=2}
-          bundle exec fastlane run sigh \
-            app_identifier:"$APP_IDENTIFIER" \
-            provisioning_name:"$IOS_APPSTORE_PROFILE_NAME" \
-            readonly:true \
-            skip_install:false \
-            api_key_path:"$ASC_KEY_JSON_PATH"
+          EXPORT_PLIST="$RUNNER_TEMP/ExportOptions.plist"
 
-          echo "Provisioning Profiles directory:"
-          ls -lah "$HOME/Library/MobileDevice/Provisioning Profiles" || true
-
-      - name: 🧾 Generate ExportOptions.plist
-        run: |
-          set -euo pipefail
-
-          cat > "$EXPORT_OPTIONS_PLIST" <<PLIST
+          cat > "$EXPORT_PLIST" << 'PLIST'
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
           <dict>
             <key>method</key>
             <string>app-store</string>
+            <key>destination</key>
+            <string>export</string>
             <key>signingStyle</key>
             <string>manual</string>
+            <key>stripSwiftSymbols</key>
+            <true/>
+            <key>compileBitcode</key>
+            <false/>
             <key>teamID</key>
             <string>${APPLE_TEAM_ID}</string>
             <key>provisioningProfiles</key>
             <dict>
               <key>${APP_IDENTIFIER}</key>
-              <string>${IOS_APPSTORE_PROFILE_NAME}</string>
+              <string>${PROFILE_UUID}</string>
             </dict>
-            <key>stripSwiftSymbols</key>
-            <true/>
-            <key>compileBitcode</key>
-            <false/>
           </dict>
           </plist>
           PLIST
 
-          /usr/bin/plutil -lint "$EXPORT_OPTIONS_PLIST"
+          test -f "$EXPORT_PLIST"
+          plutil -lint "$EXPORT_PLIST"
 
-      - name: 🏗️ Build archive
+      - name: 📤 Export IPA (xcodebuild -exportArchive)
+        shell: bash
         run: |
           set -euo pipefail
 
-          xcodebuild \
-            -workspace "$IOS_WORKSPACE" \
-            -scheme "$IOS_SCHEME" \
-            -configuration "$IOS_CONFIGURATION" \
-            -sdk iphoneos \
-            -destination "generic/platform=iOS" \
-            -archivePath "$ARCHIVE_PATH" \
-            DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
-            CODE_SIGN_STYLE=Manual \
-            PROVISIONING_PROFILE_SPECIFIER="$IOS_APPSTORE_PROFILE_NAME" \
-            clean archive
-
-      - name: 📦 Export IPA
-        run: |
-          set -euo pipefail
+          ARCHIVE_PATH="$RUNNER_TEMP/JunoNative.xcarchive"
+          EXPORT_DIR="$RUNNER_TEMP/build"
+          EXPORT_PLIST="$RUNNER_TEMP/ExportOptions.plist"
 
           rm -rf "$EXPORT_DIR"
           mkdir -p "$EXPORT_DIR"
 
-          xcodebuild -exportArchive \
+          xcodebuild \
+            -exportArchive \
             -archivePath "$ARCHIVE_PATH" \
             -exportPath "$EXPORT_DIR" \
-            -exportOptionsPlist "$EXPORT_OPTIONS_PLIST"
+            -exportOptionsPlist "$EXPORT_PLIST" | xcpretty
 
-          echo "Export dir:"
-          ls -lah "$EXPORT_DIR"
-
-          IPA_PATH="$(find "$EXPORT_DIR" -maxdepth 2 -name '*.ipa' -print -quit)"
-          if [ -z "$IPA_PATH" ]; then
-            echo "ERROR: IPA not found in $EXPORT_DIR"
+          ls -la "$EXPORT_DIR"
+          IPA_COUNT=$(find "$EXPORT_DIR" -maxdepth 1 -name "*.ipa" | wc -l | tr -d ' ')
+          if [ "$IPA_COUNT" -lt 1 ]; then
+            echo "No .ipa found in export dir"
             exit 1
           fi
 
-          echo "IPA_PATH=$IPA_PATH" >> "$GITHUB_ENV"
-          echo "Found IPA: $IPA_PATH"
-
-      - name: 🚀 Upload to TestFlight (Fastlane)
+      - name: 🚀 Upload to TestFlight (fastlane pilot)
+        shell: bash
+        env:
+          RELEASE_NOTES: ${{ inputs.release_notes }}
         run: |
           set -euo pipefail
 
-          # upload_to_testflight supports api_key_path (JSON) :contentReference[oaicite:3]{index=3}
-          bundle exec fastlane run upload_to_testflight \
-            ipa:"$IPA_PATH" \
-            api_key_path:"$ASC_KEY_JSON_PATH" \
-            skip_waiting_for_build_processing:true \
-            changelog:"${{ inputs.changelog }}"
+          EXPORT_DIR="$RUNNER_TEMP/build"
+          IPA_PATH=$(find "$EXPORT_DIR" -maxdepth 1 -name "*.ipa" | head -n 1)
 
-      - name: 📎 Upload IPA artifact
+          # Build the API key JSON for fastlane from the decoded p8 path
+          cat > "$RUNNER_TEMP/api_key.json" << JSON
+          {
+            "key_id": "${APP_STORE_CONNECT_API_KEY_ID}",
+            "issuer_id": "${APP_STORE_CONNECT_API_KEY_ISSUER_ID}",
+            "key": "$(cat "$ASC_API_KEY_PATH" | sed ':a;N;$!ba;s/\n/\\n/g')",
+            "in_house": false
+          }
+          JSON
+
+          bundle exec fastlane run pilot \
+            api_key_path:"$RUNNER_TEMP/api_key.json" \
+            ipa:"$IPA_PATH" \
+            skip_waiting_for_build_processing:true \
+            changelog:"$RELEASE_NOTES"
+
+      - name: 📎 Upload build artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ios-ipa
-          path: ${{ env.IPA_PATH }}
-          if-no-files-found: error
+          name: ios-build-artifacts
+          path: |
+            ${{ steps.paths.outputs.export_options_plist }}
+            ${{ steps.paths.outputs.archive_info_plist }}
+            ${{ steps.paths.outputs.archive_path }}
+            ${{ steps.paths.outputs.export_dir }}
+
+      - name: 🧹 Cleanup keychain
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "${KEYCHAIN_PATH:-}" ] && [ -f "$KEYCHAIN_PATH" ]; then
+            security delete-keychain "$KEYCHAIN_PATH" || true
+          fi
