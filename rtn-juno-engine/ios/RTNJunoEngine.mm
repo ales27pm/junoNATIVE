@@ -3,6 +3,7 @@
 #import <React/RCTEventEmitter.h>
 #import <React/RCTBridgeModule.h>
 #import <cstring>
+#include <vector>
 #include <exception>
 
 #import "RTNJunoEngine.h"
@@ -85,29 +86,30 @@ RCT_EXPORT_METHOD(initialize:(NSDictionary *)config)
                                   const AudioTimeStamp *timestamp,
                                   AVAudioFrameCount frameCount,
                                   AudioBufferList *outputData) {
+      (void)timestamp;
       __strong typeof(weakSelf) strongSelf = weakSelf;
       if (!strongSelf || !strongSelf->_dspEngine) {
         *isSilence = YES;
         for (UInt32 i = 0; i < outputData->mNumberBuffers; ++i) {
           std::memset(outputData->mBuffers[i].mData, 0,
                       outputData->mBuffers[i].mDataByteSize);
-        if (!right) {
-          // mono buffer: render to a temporary stereo buffer and mix down.
-          std::vector<float> tempL(frameCount);
-          std::vector<float> tempR(frameCount);
-          strongSelf->_dspEngine->renderAudio(tempL.data(), tempR.data(), static_cast<int>(frameCount));
-          for (AVAudioFrameCount i = 0; i < frameCount; ++i) {
-              left[i] = (tempL[i] + tempR[i]) * 0.5f;
-          }
-        } else {
+        }
+        return noErr;
+      }
+
+      float *left = (float *)outputData->mBuffers[0].mData;
       float *right = (outputData->mNumberBuffers > 1)
-                     ? (float *)outputData->mBuffers[1].mData
-                     : nullptr;
+                       ? (float *)outputData->mBuffers[1].mData
+                       : nullptr;
 
       if (!right) {
-        // mono buffer: duplicate
-        strongSelf->_dspEngine->renderAudio(left, left,
+        std::vector<float> tempL(frameCount);
+        std::vector<float> tempR(frameCount);
+        strongSelf->_dspEngine->renderAudio(tempL.data(), tempR.data(),
                                             static_cast<int>(frameCount));
+        for (AVAudioFrameCount i = 0; i < frameCount; ++i) {
+          left[i] = (tempL[i] + tempR[i]) * 0.5f;
+        }
       } else {
         strongSelf->_dspEngine->renderAudio(left, right,
                                             static_cast<int>(frameCount));

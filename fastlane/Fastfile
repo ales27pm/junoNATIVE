@@ -1,8 +1,13 @@
 default_platform(:ios)
 
-require "base64"
-require "tmpdir"
-require "fileutils"
+require 'base64'
+require 'tmpdir'
+require 'fileutils'
+
+ROOT_DIR = File.expand_path('..', __dir__)
+IOS_OUTPUT_DIR = File.join(ROOT_DIR, 'fastlane/build/ios')
+CMAKE_BUILD_DIR = File.join(ROOT_DIR, 'fastlane/build/cmake')
+CMAKE_CONFIGURATION = 'Release'
 
 def require_env!(name)
   v = ENV[name]
@@ -10,81 +15,197 @@ def require_env!(name)
   v
 end
 
+def require_envs!(*names)
+  names.each { |name| require_env!(name) }
+end
+
+def resolve_bool_env(name, default = false)
+  value = ENV[name]
+  return default if value.nil?
+
+  normalized = value.to_s.strip.downcase
+  return true if %w[1 true yes y on].include?(normalized)
+  return false if %w[0 false no n off].include?(normalized)
+
+  default
+end
+
 def write_tmp_bytes(filename, bytes)
-  dir = File.join(Dir.mktmpdir, "fastlane_ci")
+  dir = File.join(Dir.mktmpdir, 'fastlane_ci')
   FileUtils.mkdir_p(dir)
   path = File.join(dir, filename)
   File.binwrite(path, bytes)
   path
 end
 
-platform :ios do
-  desc "CI build + upload to TestFlight using App Store Connect API key"
-  lane :ios_ci do
-    require_env!("APP_IDENTIFIER")
-    require_env!("APPLE_TEAM_ID")
-    require_env!("APP_STORE_CONNECT_API_KEY_ID")
-    require_env!("APP_STORE_CONNECT_API_KEY_ISSUER_ID")
-    require_env!("APP_STORE_CONNECT_API_KEY_BASE64")
-    require_env!("IOS_DIST_CERT_BASE64")
-    require_env!("IOS_DIST_CERT_PASSWORD")
-    require_env!("IOS_APPSTORE_PROFILE_NAME")
-
-    # Decode .p8 (accept base64 or raw)
-    raw = ENV["APP_STORE_CONNECT_API_KEY_BASE64"].to_s.strip
+def decode_base64_or_raw(raw_value)
+  raw = raw_value.to_s.strip
+  decoded = nil
+  begin
+    candidate = Base64.decode64(raw)
+    decoded = candidate unless candidate.nil? || candidate.empty?
+  rescue StandardError
     decoded = nil
-    begin
-      decoded = Base64.decode64(raw)
-      decoded = nil unless decoded.include?("BEGIN PRIVATE KEY")
-    rescue
-      decoded = nil
+  end
+  decoded || raw
+end
+
+def decode_app_store_key(raw_value)
+  decoded = decode_base64_or_raw(raw_value)
+  return decoded if decoded.include?('BEGIN PRIVATE KEY')
+
+  raw_value.to_s.strip
+end
+
+def app_store_key_from_env!
+  require_envs!(
+    'APP_STORE_CONNECT_API_KEY_ID',
+    'APP_STORE_CONNECT_API_KEY_ISSUER_ID',
+    'APP_STORE_CONNECT_API_KEY_BASE64'
+  )
+
+  key_bytes = decode_app_store_key(ENV['APP_STORE_CONNECT_API_KEY_BASE64']).encode('utf-8')
+  p8_path = write_tmp_bytes('AuthKey.p8', key_bytes)
+
+  app_store_connect_api_key(
+    key_id: ENV['APP_STORE_CONNECT_API_KEY_ID'],
+    issuer_id: ENV['APP_STORE_CONNECT_API_KEY_ISSUER_ID'],
+    key_filepath: p8_path
+  )
+end
+
+platform :ios do
+  desc 'Validate local deploy toolchain and required base env vars'
+  lane :verify_deploy_environment do
+    require_envs!('APP_IDENTIFIER', 'APPLE_TEAM_ID')
+
+    required_tools = %w[cmake node npm xcodebuild bundle]
+    required_tools.each do |tool|
+      sh("command -v #{tool} >/dev/null")
     end
-    decoded ||= raw
 
-    p8_path = write_tmp_bytes("AuthKey.p8", decoded.encode("utf-8"))
+    UI.message("Using ROOT_DIR=#{ROOT_DIR}")
+    UI.message("Using workspace=#{ENV.fetch('IOS_WORKSPACE', File.join(ROOT_DIR, 'ios/JunoNative.xcworkspace'))}")
+    UI.message("Using scheme=#{ENV.fetch('IOS_SCHEME', 'JunoNative')}")
+  end
 
-    api_key = app_store_connect_api_key(
-      key_id: ENV["APP_STORE_CONNECT_API_KEY_ID"],
-      issuer_id: ENV["APP_STORE_CONNECT_API_KEY_ISSUER_ID"],
-      key_filepath: p8_path
-    )
+  desc 'Build C++ engine + TurboModules + iOS archive to fastlane/build/ios (local, no EAS)'
+  lane :local_build_appstore_ipa do
+    app_identifier = require_env!('APP_IDENTIFIER')
+    team_id = require_env!('APPLE_TEAM_ID')
+    profile_name = require_env!('IOS_APPSTORE_PROFILE_NAME')
 
-    # Import Distribution cert (p12)
-    p12_path = write_tmp_bytes("dist.p12", Base64.decode64(ENV["IOS_DIST_CERT_BASE64"]))
+    FileUtils.mkdir_p(IOS_OUTPUT_DIR)
+    sh("cmake -S #{ROOT_DIR} -B #{CMAKE_BUILD_DIR} -DCMAKE_BUILD_TYPE=#{CMAKE_CONFIGURATION}")
+    sh("cmake --build #{CMAKE_BUILD_DIR} --config #{CMAKE_CONFIGURATION}")
+    sh("bash #{File.join(ROOT_DIR, 'scripts/compile-turbo-modules.sh')}")
 
-    import_certificate(
-      certificate_path: p12_path,
-      certificate_password: ENV["IOS_DIST_CERT_PASSWORD"]
-    )
-
-    # Fetch + install provisioning profile (by *name*)
-    sigh(
-      app_identifier: ENV["APP_IDENTIFIER"],
-      provisioning_name: ENV["IOS_APPSTORE_PROFILE_NAME"],
-      readonly: true,
-      skip_install: false,
-      api_key: api_key
-    )
+    unless resolve_bool_env('IOS_SKIP_PODS', false)
+      cocoapods(clean_install: true, podfile: File.join(ROOT_DIR, 'ios/Podfile'))
+    end
 
     build_app(
-      workspace: ENV.fetch("IOS_WORKSPACE", "ios/JunoNative.xcworkspace"),
-      scheme: ENV.fetch("IOS_SCHEME", "JunoNative"),
-      configuration: "Release",
-      export_method: "app-store",
+      workspace: ENV.fetch('IOS_WORKSPACE', File.join(ROOT_DIR, 'ios/JunoNative.xcworkspace')),
+      scheme: ENV.fetch('IOS_SCHEME', 'JunoNative'),
+      configuration: CMAKE_CONFIGURATION,
+      output_directory: IOS_OUTPUT_DIR,
+      output_name: ENV.fetch('IOS_OUTPUT_NAME', 'JunoNative.ipa'),
+      export_method: 'app-store',
       export_options: {
-        signingStyle: "manual",
-        teamID: ENV["APPLE_TEAM_ID"],
+        signingStyle: 'manual',
+        teamID: team_id,
         provisioningProfiles: {
-          ENV["APP_IDENTIFIER"] => ENV["IOS_APPSTORE_PROFILE_NAME"]
+          app_identifier => profile_name
         },
         compileBitcode: false
       }
     )
 
+    UI.message("IPA built at: #{lane_context[SharedValues::IPA_OUTPUT_PATH]}")
+  end
+
+  desc 'Upload an existing IPA to App Store Connect / TestFlight (local, no EAS)'
+  lane :submit_to_appstoreconnect do
+    api_key = app_store_key_from_env!
+    ipa_path = ENV['IOS_IPA_PATH'] || lane_context[SharedValues::IPA_OUTPUT_PATH]
+    UI.user_error!("Missing IPA path. Set ENV['IOS_IPA_PATH'] or run local_build_appstore_ipa first.") if ipa_path.to_s.strip.empty?
+
+    upload_to_testflight(
+      api_key: api_key,
+      ipa: ipa_path,
+      skip_waiting_for_build_processing: true,
+      changelog: ENV['TESTFLIGHT_CHANGELOG']
+    )
+  end
+
+  desc 'End-to-end local workflow using pre-exported distribution cert + profile fetch (no EAS)'
+  lane :local_build_and_submit do
+    require_envs!(
+      'IOS_DIST_CERT_BASE64',
+      'IOS_DIST_CERT_PASSWORD',
+      'APP_IDENTIFIER',
+      'IOS_APPSTORE_PROFILE_NAME'
+    )
+
+    cert_bytes = decode_base64_or_raw(ENV['IOS_DIST_CERT_BASE64'])
+    p12_path = write_tmp_bytes('dist.p12', cert_bytes)
+    import_certificate(
+      certificate_path: p12_path,
+      certificate_password: ENV['IOS_DIST_CERT_PASSWORD']
+    )
+
+    api_key = app_store_key_from_env!
+
+    sigh(
+      app_identifier: ENV['APP_IDENTIFIER'],
+      provisioning_name: ENV['IOS_APPSTORE_PROFILE_NAME'],
+      readonly: true,
+      skip_install: false,
+      api_key: api_key
+    )
+
+    local_build_appstore_ipa
+
     upload_to_testflight(
       api_key: api_key,
       ipa: lane_context[SharedValues::IPA_OUTPUT_PATH],
-      skip_waiting_for_build_processing: true
+      skip_waiting_for_build_processing: true,
+      changelog: ENV['TESTFLIGHT_CHANGELOG']
     )
+  end
+
+  desc 'Create or renew Apple Distribution cert/profile directly from Apple Developer portal'
+  lane :bootstrap_signing_from_apple do
+    require_envs!('APPLE_ID', 'APP_IDENTIFIER', 'IOS_APPSTORE_PROFILE_NAME', 'APPLE_TEAM_ID')
+
+    get_certificates(
+      username: ENV['APPLE_ID'],
+      team_id: ENV['APPLE_TEAM_ID'],
+      generate_apple_certs: true,
+      force: resolve_bool_env('IOS_FORCE_RENEW_CERTS', false)
+    )
+
+    sigh(
+      username: ENV['APPLE_ID'],
+      team_id: ENV['APPLE_TEAM_ID'],
+      app_identifier: ENV['APP_IDENTIFIER'],
+      provisioning_name: ENV['IOS_APPSTORE_PROFILE_NAME'],
+      readonly: false,
+      skip_install: false,
+      force: resolve_bool_env('IOS_FORCE_RENEW_PROFILE', false)
+    )
+  end
+
+  desc 'One-command deploy: fetch/create signing from Apple + build + upload TestFlight'
+  lane :automated_deploy_from_apple do
+    verify_deploy_environment
+    bootstrap_signing_from_apple
+    local_build_appstore_ipa
+    submit_to_appstoreconnect
+  end
+
+  desc 'Legacy CI lane (kept for compatibility)'
+  lane :ios_ci do
+    local_build_and_submit
   end
 end
